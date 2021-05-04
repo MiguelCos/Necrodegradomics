@@ -1,0 +1,587 @@
+---
+title: "Liver Necrodegradomics - Pinpointing proteins with pseudo-increased/decreased abudance using `limma`"
+author: "Miguel Cosenza"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: rmarkdown::github_document #html_document 
+---
+
+```{r setup, include=FALSE, fig.width=12, fig.height=12}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, error = TRUE)
+
+library(tidyverse)
+library(ComplexHeatmap)
+
+library(MSstats)
+library(dplyr)
+library(here)
+library(readr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(proDA)
+library(tibble)
+library(parallel)
+library(naniar)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+#source(here::here("function_compare_spline_poly_appr.R"))
+
+```
+
+# Pre-processing and normalization   
+
+### Load data  
+
+```{r}
+## Read and load input files ####
+
+evidence <- read.table(file = here::here("data/liver_txt/evidence.txt"),
+                       sep = "\t",
+                       header = TRUE)
+
+annotation <- read.csv(file = here::here("data/liver_txt/Liver_MS306-331.csv"),
+                       header = TRUE)
+
+proteingroups <- read.table(file = here::here("data/liver_txt/proteinGroups.txt"),
+                            sep = "\t",
+                            header = TRUE)
+```
+
+```{r}
+msts_data_w1pep <- MaxQtoMSstatsFormat(evidence = evidence,
+                                       annotation = annotation,
+                                       useUniquePeptide = TRUE,
+                                       proteinID = 'Leading.razor.protein',
+                                       proteinGroups = proteingroups,
+                                       fewMeasurements = "keep",
+                                       removeProtein_with1Peptide	= FALSE)
+
+### Correction of protein names  ----
+
+# Get the lead protein of the 'protein group'
+msts_formated_data <- dplyr::mutate(msts_data_w1pep,
+                                    ProteinName = stringr::str_remove_all(ProteinName, ";.*$")) %>%
+      dplyr::mutate(ProteinName = stringr::str_trim(ProteinName)) %>% 
+  filter(!str_detect(ProteinName, "Biogno"))
+
+#get only the UniprotID 
+
+split1 <- str_split_fixed(msts_formated_data$ProteinName, "\\|", n = 3)
+
+uniprot_id <- split1[,2]
+
+uniprot_code <- split1[,3]
+
+msts_formated_data$ProteinName <- uniprot_id  
+```
+
+## Normalization    
+
+```{r}
+if(!file.exists(here::here("results/msstas_rds/liver_summ_norm_object.rds"))){
+      
+      cl <- makeCluster(8)
+      
+      normalized_data <- dataProcess(msts_formated_data,
+                                     logTrans=2,
+                                     normalization="equalizeMedians",
+                                     nameStandards=NULL,
+                                     address="",
+                                     fillIncompleteRows=TRUE,
+                                     featureSubset="all",
+                                     remove_uninformative_feature_outlier=TRUE,
+                                     n_top_feature=3,
+                                     summaryMethod="TMP",
+                                     equalFeatureVar=TRUE,
+                                     censoredInt="NA",
+                                     cutoffCensored="minFeature",
+                                     MBimpute=FALSE,
+                                     remove50missing=FALSE,
+                                     maxQuantileforCensored=0.999,
+                                     clusters=cl)
+      
+      stopCluster(cl)
+      
+      
+      
+      write_rds(normalized_data, here::here("results/msstas_rds/liver_summ_norm_object.rds"))
+} else {
+      normalized_data <- read_rds(here::here("results/msstas_rds/liver_summ_norm_object.rds"))
+}
+```  
+
+### Prep data into wide format   
+
+```{r}
+source(here::here("scr/msstats_summ_norm2_expression_matrix.R"))
+```
+
+```{r}
+tab_wide_msts_data <- msstats_out2_wide(normalized_data)  
+
+# Create matrix and median normalization with proDA ----
+
+tomat <- tab_wide_msts_data %>% 
+      tibble::column_to_rownames("ID") %>% 
+      as.matrix()
+
+tomat_norm <- median_normalization(tomat)
+
+tab_wide_norm_data <- tomat_norm %>% 
+      as.data.frame() %>%
+      tibble::rownames_to_column("ID")
+
+## Save expression matrix before imputation ----
+
+write_delim(x = tab_wide_norm_data, 
+            file = here::here("results/msstats_log2_proda_norm_expr_mat_ncro_liver.txt"),
+            delim = "\t")
+```
+
+# Explore missing values   
+
+```{r fig.width=10, fig.height=6}
+vis_miss(tab_wide_msts_data) + 
+  ggtitle("Missing data from the liver data") + 
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+Random forest imputation was performed in order to run the linear models.
+
+## Random Forest Imputation  
+
+```{r}
+t_mat <- t(tomat_norm)
+
+
+if(!file.exists(here::here("results/msstas_rds/liver_imputation_object.rds"))){
+      
+      cl <- makeCluster(8)
+      
+      t_matimp <- missForest::missForest(t_mat, parallelize = 'variables')
+      
+      write_rds(t_matimp, here::here("results/msstas_rds/liver_imputation_object.rds"))
+      
+      stopCluster(cl)
+      
+} else {
+      t_matimp <- read_rds(here::here("results/msstas_rds/liver_imputation_object.rds"))
+}
+
+mat_imp <- t(t_matimp$ximp)
+
+tab_wide_imp <- mat_imp %>% 
+      as_tibble() %>%
+      mutate(ID = row.names(mat_imp)) %>% 
+      relocate(ID)
+
+write_delim(x = tab_wide_imp, 
+            file = here::here("results/msstats_log2_norm_expr_mat_ncro_liver_imputed.txt"),
+            delim = "\t")
+```
+
+# Fitting linear models with `limma`  
+
+Three (3) types of models will be applied to pinpoint proteins with three different behaviors across time.  
+
+- Model 1: Time as a continuous variable: will identify proteins that either have linear 'increased' or 'decreased' behavior over time.
+- Model 2: Polynomial spline fitting with 2 degrees of freedom: will catch proteins that have a maximal or minimum peak at one time point.
+- Model 3: Polynomial spline fitting with 3 degrees of freedom: will catch proteins that have a 'sigmoidal' behavior across time.  
+
+```{r}
+# Source functions to fit linear models and visualizations 
+source(here::here("scr/function_fit_time_course_limma.R"))
+```
+
+
+### Load expression matrices  
+
+```{r}
+wide_imp <- read_delim(here::here("results/msstats_log2_norm_expr_mat_ncro_liver_imputed.txt"),
+                       delim = "\t")
+
+wide_dat <- read_delim(here::here("results/msstats_log2_proda_norm_expr_mat_ncro_liver.txt"),
+                       delim = "\t")
+```
+
+## Model 1: Time as a continuous variable  
+
+```{r}
+fit_time_cont <- fit_limma_poly(type = "linear", 
+                                .x = 2,
+                                wide_imp = wide_imp, 
+                                wide_dat = wide_dat,
+                                pval_cutoff = 0.05)
+```
+
+### Design matrix  
+
+```{r}
+fit_time_cont$limma_fit$design
+```
+
+### Histogram of distribution of adjusted p-values.  
+
+```{r fig.width=8, fig.height=5}
+histogram_toptable(fit_time_cont$toptable,
+                   type = "Linear",
+                   .x = NULL)
+```
+
+## Model 2: Polynomial spline fitting with 2 degrees of freedom   
+
+```{r}
+fit_spline_df2 <- fit_limma_poly(type = "spline", 
+                                .x = 2,
+                                wide_imp = wide_imp, 
+                                wide_dat = wide_dat,
+                                pval_cutoff = 0.05)
+```
+
+### Design matrix  
+
+```{r}
+fit_spline_df2$limma_fit$design
+```
+
+### Histogram of distribution of adjusted p-values.  
+
+```{r fig.width=8, fig.height=5}
+histogram_toptable(fit_spline_df2$toptable,
+                   type = "Spline",
+                   .x = 2)
+```
+
+## Model 3: Polynomial spline fitting with 3 degrees of freedom  
+
+```{r}
+fit_spline_df3 <- fit_limma_poly(type = "spline", 
+                                .x = 3,
+                                wide_imp = wide_imp, 
+                                wide_dat = wide_dat,  
+                                pval_cutoff = 0.05)
+```
+
+### Design matrix  
+
+```{r}
+fit_spline_df3$limma_fit$design
+```
+
+### Histogram of distribution of adjusted p-values.  
+
+```{r fig.width=8, fig.height=5}
+histogram_toptable(fit_spline_df3$toptable,
+                   type = "Spline",
+                   .x = 3)
+```
+
+# Intersection analyses  
+
+The intersection analysis would allow to identify proteins that are exclusively identified by one of the models/approaches.  
+
+### Prep list of proteins identified by each model/approach for the intersection analysis.  
+
+```{r}
+pot_degress <- c(2, 3)
+names(pot_degress) <- paste0(rep("Degr"), pot_degress)
+
+spline_prots <- map(.x = pot_degress, 
+    .f = fit_limma_tocomp,
+     type = "spline", wide_imp = wide_imp, wide_dat = wide_dat, pval_cutoff = 0.05)
+
+names(spline_prots) <- paste0(rep("Spline_"),names(spline_prots))
+
+```
+
+```{r}
+linear_prots <- fit_limma_tocomp(.x = 1,
+     type = "linear", wide_imp = wide_imp, wide_dat = wide_dat, pval_cutoff = 0.05)
+
+linear_prots <- list(Linear = linear_prots)
+
+large_list_1 <- c(spline_prots,
+                  linear_prots)
+
+```    
+
+## Upset plot for the intersection of proteins identified as associated with the regression models and an adjusted `p-value < 0.05`.  
+
+```{r fig.width=8, fig.height=4}
+UpSetR::upset(UpSetR::fromList(large_list_1), nsets = 11, order.by = "freq")
+```
+
+### Upset plots with `complexHeatmap` package are better for further processing the intersecting elements  
+
+```{r}
+comb_mat <- make_comb_mat(large_list_1, min_set_size = 1)
+```  
+
+#### Combination matrix   
+
+```{r}
+print(comb_mat)
+```
+
+## Proteins that were detected by simple linear model and spline DF 2  
+
+These proteins are those that can be considered to have a linear relationship with time, even if they were also detected by the spline DF 2 model.
+
+```{r}
+only_linear <- c(extract_comb(comb_mat, "001"),extract_comb(comb_mat, "101"))
+```
+```{r}
+length(only_linear)
+```
+
+### Proteins with positive relation with Time  
+
+```{r message=FALSE, warning=FALSE}
+pos_linear <- fit_time_cont$toptable %>% 
+  filter(ID %in% only_linear,
+         logFC > 0)
+
+poslin_bitr <- clusterProfiler::bitr(pos_linear$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+pos_linear <- left_join(pos_linear, poslin_bitr, by = "ID")
+```
+
+```{r fig.width=11, fig.height=12, warning=FALSE, message=FALSE}
+vis_profs(data = wide_dat, 
+          toptable = pos_linear, 
+          pval_cutoff = 0.05, 
+          title1 = "Proteins with linear and positive association with Time",
+          subtitle1 = "Top 18 proteins with the lowest adjusted p-value",
+          top_nr = 18, 
+          fited_values = fit_time_cont$fitted_values, 
+          method = "lm",
+          interesting = pos_linear$ID) + 
+  labs(caption = "Lower p-values indicate a stronger association Protein Expression vs Time") 
+```
+
+### Proteins with negative relation with Time  
+
+```{r message=FALSE, warning=FALSE}
+neg_linear <- fit_time_cont$toptable %>% 
+  filter(ID %in% only_linear,
+         logFC < 0)
+
+neglin_bitr <- clusterProfiler::bitr(neg_linear$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+neg_linear <- left_join(neg_linear, neglin_bitr, by = "ID")
+
+neg_linear <- mutate(neg_linear,
+                     SYMBOL = ifelse(is.na(SYMBOL),
+                                     yes = ID,
+                                     no = SYMBOL))
+```
+
+```{r fig.width=11, fig.height=11, warning=FALSE, message=FALSE}
+vis_profs(data = wide_dat, 
+          toptable = neg_linear, 
+          pval_cutoff = 0.05, 
+          title1 = "Proteins with linear and negative association with Time",
+          subtitle1 = "Top 18 proteins with the lowest adjusted p-value",
+          top_nr = 18, 
+          fited_values = fit_time_cont$fitted_values, 
+          method = "lm",
+          interesting = neg_linear$ID) + 
+  labs(caption = "Lower p-values indicate a stronger association Protein Expression vs Time") 
+```
+
+## Proteins that were detected only by splines with 2 DF  
+
+```{r}
+only_2DF <- extract_comb(comb_mat, "100")
+```
+```{r}
+length(only_2DF)
+```
+
+```{r message=FALSE, warning=FALSE}
+df2_bitr <- clusterProfiler::bitr(fit_spline_df2$toptable$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+fit_spline_df2$toptable <- left_join(fit_spline_df2$toptable, df2_bitr, by = "ID")
+```
+
+```{r fig.width=11, fig.height=11, warning=FALSE, message=FALSE}
+vis_profs(data = wide_dat, 
+          toptable = fit_spline_df2$toptable, 
+          pval_cutoff = 0.05, 
+          title1 = "Proteins with spline fitting (2 DF)",
+          subtitle1 = "Top 18 proteins with the lowest adjusted p-value",
+          top_nr = 18, 
+          fited_values = fit_spline_df2$fitted_values, 
+          method = NULL,
+          interesting = only_2DF) + 
+  labs(caption = "Lower p-values indicate a stronger association Protein Expression vs Spline model") 
+```
+
+## Proteins that were detected only by splines with 2 and 3 DF  
+
+```{r}
+only_3n2DF <- c(extract_comb(comb_mat, "010"),extract_comb(comb_mat, "110"))
+```
+```{r}
+length(only_3n2DF)
+```
+
+```{r message=FALSE, warning=FALSE}
+df3_bitr <- clusterProfiler::bitr(fit_spline_df3$toptable$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+fit_spline_df3$toptable <- left_join(fit_spline_df3$toptable, df3_bitr, by = "ID")
+```
+
+```{r fig.width=11, fig.height=6, warning=FALSE, message=FALSE}
+vis_profs(data = wide_dat, 
+          toptable = fit_spline_df3$toptable, 
+          pval_cutoff = 0.05, 
+          title1 = "Proteins with spline fitting (3 DF)",
+          subtitle1 = "Top 18 proteins with the lowest adjusted p-value",
+          top_nr = 18, 
+          fited_values = fit_spline_df3$fitted_values, 
+          method = NULL,
+          interesting = only_3n2DF) + 
+  labs(caption = "Lower p-values indicate a stronger association Protein Expression vs Spline model") 
+```
+
+ 
+
+# Exploratory Functional annotation  
+
+In order to explore the functional annotation of the proteins detected under different models, a 'relaxed' enrichment analysis was performed.  
+
+The adjusted p-value cut-off of the over-representation test was set to `0.1` and for the universe of background proteins all human proteins were kept.  
+
+```{r}
+selected_proteins <- list(`Positive linear` = pos_linear$ID,
+                          `Negative linear` = neg_linear$ID,
+                          `Spline 2DF` = only_2DF, 
+                          `Spline 3DF` = only_3n2DF)
+```
+
+```{r message=FALSE}
+library(clusterProfiler)
+library(ReactomePA)
+library(org.Hs.eg.db)
+```  
+
+## GO:MF  
+
+```{r}
+group_comparison_functional<- compareCluster(geneCluster = selected_proteins, 
+                                             fun = "enrichGO",
+                                             OrgDb = org.Hs.eg.db,
+                                             keyType = "UNIPROT",
+                                             ont = "MF",
+                                             pvalueCutoff = 0.1,
+                                             pAdjustMethod = "BH", 
+                                             qvalueCutoff = 0.2,
+                                             minGSSize = 10,
+                                             maxGSSize = 500,
+                                             readable = FALSE,
+                                             pool = FALSE)
+```
+
+```{r fig.width=14, fig.height=6}
+dotplot(group_comparison_functional)
+```
+
+## GO:CC   
+
+```{r}
+group_comparison_functionalcc <- compareCluster(geneCluster = selected_proteins, 
+                                             fun = "enrichGO",
+                                             OrgDb = org.Hs.eg.db,
+                                             keyType = "UNIPROT",
+                                             ont = "CC",
+                                             pvalueCutoff = 0.1,
+                                             pAdjustMethod = "BH", 
+                                             qvalueCutoff = 0.2,
+                                             minGSSize = 10,
+                                             maxGSSize = 500,
+                                             readable = FALSE,
+                                             pool = FALSE)
+```
+
+```{r fig.width=10, fig.height=6}
+dotplot(group_comparison_functionalcc)
+```
+
+## GO:BP  
+
+```{r}
+group_comparison_functionalbp <- compareCluster(geneCluster = selected_proteins, 
+                                             fun = "enrichGO",
+                                             OrgDb = org.Hs.eg.db,
+                                             keyType = "UNIPROT",
+                                             ont = "BP",
+                                             pvalueCutoff = 0.1,
+                                             pAdjustMethod = "BH", 
+                                             qvalueCutoff = 0.2,
+                                             minGSSize = 10,
+                                             maxGSSize = 500,
+                                             readable = FALSE,
+                                             pool = FALSE)
+```
+
+```{r fig.width=10, fig.height=6}
+dotplot(group_comparison_functionalbp)
+```
+
+## Reactome    
+
+```{r message=FALSE, warning=FALSE}
+translate <- function(x){
+  df1 <- bitr(geneID = x,
+              fromType = "UNIPROT",
+              toType = "ENTREZID",
+              OrgDb = org.Hs.eg.db,
+              drop = TRUE) %>% 
+    pull(ENTREZID)
+  
+  return(df1)
+}
+
+selected_proteinsentrez <- map(selected_proteins,
+                               translate)
+```
+
+
+```{r}
+group_comparison_functionalreac <- compareCluster(geneCluster = selected_proteinsentrez, 
+                                             fun = "enrichPathway",
+                                             organism = "human",
+                                             pvalueCutoff = 0.1,
+                                             pAdjustMethod = "BH", 
+                                             qvalueCutoff = 0.2,
+                                             minGSSize = 10,
+                                             maxGSSize = 500,
+                                             readable = FALSE)
+```
+
+```{r fig.width=13, fig.height=6}
+dotplot(group_comparison_functionalreac)
+```
+
+
+
+
+
