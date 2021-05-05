@@ -2,7 +2,7 @@
 title: "Kidney Necrodegradomics - Pinpointing proteins with pseudo-increased/decreased abudance using `limma`"
 author: "Miguel Cosenza"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
-output: html_document #rmarkdown::github_document
+output: rmarkdown::github_document #html_document 
 ---
 
 ```{r setup, include=FALSE, fig.width=12, fig.height=12}

@@ -1,39 +1,14 @@
----
-title: "Liver Necrodegradomics - Pinpointing proteins with pseudo-increased/decreased abudance using `limma`"
-author: "Miguel Cosenza"
-date: "`r format(Sys.time(), '%d %B, %Y')`"
-output: rmarkdown::github_document #html_document  
----
+Liver Necrodegradomics - Pinpointing proteins with
+pseudo-increased/decreased abudance using `limma`
+================
+Miguel Cosenza
+05 May, 2021
 
-```{r setup, include=FALSE, fig.width=12, fig.height=12}
-knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, error = FALSE)
+# Pre-processing and normalization
 
-library(tidyverse)
-library(ComplexHeatmap)
+### Load data
 
-library(MSstats)
-library(dplyr)
-library(here)
-library(readr)
-library(tidyr)
-library(stringr)
-library(ggplot2)
-library(proDA)
-library(tibble)
-library(parallel)
-library(naniar)
-library(clusterProfiler)
-library(org.Hs.eg.db)
-
-#source(here::here("function_compare_spline_poly_appr.R"))
-
-```
-
-# Pre-processing and normalization   
-
-### Load data  
-
-```{r}
+``` r
 ## Read and load input files ####
 
 evidence <- read.table(file = here::here("data/liver_txt/evidence.txt"),
@@ -48,14 +23,14 @@ proteingroups <- read.table(file = here::here("data/liver_txt/proteinGroups.txt"
                             header = TRUE)
 ```
 
-```{r}
+``` r
 msts_data_w1pep <- MaxQtoMSstatsFormat(evidence = evidence,
                                        annotation = annotation,
                                        useUniquePeptide = TRUE,
                                        proteinID = 'Leading.razor.protein',
                                        proteinGroups = proteingroups,
                                        fewMeasurements = "keep",
-                                       removeProtein_with1Peptide	= FALSE)
+                                       removeProtein_with1Peptide   = FALSE)
 
 ### Correction of protein names  ----
 
@@ -76,9 +51,9 @@ uniprot_code <- split1[,3]
 msts_formated_data$ProteinName <- uniprot_id  
 ```
 
-## Normalization    
+## Normalization
 
-```{r}
+``` r
 if(!file.exists(here::here("results/msstas_rds/liver_summ_norm_object.rds"))){
       
       cl <- makeCluster(8)
@@ -109,15 +84,15 @@ if(!file.exists(here::here("results/msstas_rds/liver_summ_norm_object.rds"))){
 } else {
       normalized_data <- read_rds(here::here("results/msstas_rds/liver_summ_norm_object.rds"))
 }
-```  
+```
 
-### Prep data into wide format   
+### Prep data into wide format
 
-```{r}
+``` r
 source(here::here("scr/msstats_summ_norm2_expression_matrix.R"))
 ```
 
-```{r}
+``` r
 tab_wide_msts_data <- msstats_out2_wide(normalized_data)  
 
 # Create matrix and median normalization with proDA ----
@@ -139,19 +114,22 @@ write_delim(x = tab_wide_norm_data,
             delim = "\t")
 ```
 
-# Explore missing values   
+# Explore missing values
 
-```{r fig.width=10, fig.height=6}
+``` r
 vis_miss(tab_wide_msts_data) + 
   ggtitle("Missing data from the liver data") + 
   theme(axis.text.x = element_text(angle = 90))
 ```
 
-Random forest imputation was performed in order to run the linear models.
+![](liver_necrodegreadomics_limma_files/figure-gfm/unnamed-chunk-6-1.png)<!-- -->
 
-## Random Forest Imputation  
+Random forest imputation was performed in order to run the linear
+models.
 
-```{r}
+## Random Forest Imputation
+
+``` r
 t_mat <- t(tomat_norm)
 
 
@@ -181,23 +159,29 @@ write_delim(x = tab_wide_imp,
             delim = "\t")
 ```
 
-# Fitting linear models with `limma`  
+# Fitting linear models with `limma`
 
-Three (3) types of models will be applied to pinpoint proteins with three different behaviors across time.  
+Three (3) types of models will be applied to pinpoint proteins with
+three different behaviors across time.
 
-- Model 1: Time as a continuous variable: will identify proteins that either have linear 'increased' or 'decreased' behavior over time.
-- Model 2: Polynomial spline fitting with 2 degrees of freedom: will catch proteins that have a maximal or minimum peak at one time point.
-- Model 3: Polynomial spline fitting with 3 degrees of freedom: will catch proteins that have a 'sigmoidal' behavior across time.  
+  - Model 1: Time as a continuous variable: will identify proteins that
+    either have linear ‘increased’ or ‘decreased’ behavior over time.
+  - Model 2: Polynomial spline fitting with 2 degrees of freedom: will
+    catch proteins that have a maximal or minimum peak at one time
+    point.
+  - Model 3: Polynomial spline fitting with 3 degrees of freedom: will
+    catch proteins that have a ‘sigmoidal’ behavior across time.
 
-```{r}
+<!-- end list -->
+
+``` r
 # Source functions to fit linear models and visualizations 
 source(here::here("scr/function_fit_time_course_limma.R"))
 ```
 
+### Load expression matrices
 
-### Load expression matrices  
-
-```{r}
+``` r
 wide_imp <- read_delim(here::here("results/msstats_log2_norm_expr_mat_ncro_liver_imputed.txt"),
                        delim = "\t")
 
@@ -205,9 +189,9 @@ wide_dat <- read_delim(here::here("results/msstats_log2_proda_norm_expr_mat_ncro
                        delim = "\t")
 ```
 
-## Model 1: Time as a continuous variable  
+## Model 1: Time as a continuous variable
 
-```{r}
+``` r
 fit_time_cont <- fit_limma_poly(type = "linear", 
                                 .x = 2,
                                 wide_imp = wide_imp, 
@@ -215,23 +199,55 @@ fit_time_cont <- fit_limma_poly(type = "linear",
                                 pval_cutoff = 0.05)
 ```
 
-### Design matrix  
+### Design matrix
 
-```{r}
+``` r
 fit_time_cont$limma_fit$design
 ```
 
-### Histogram of distribution of adjusted p-values.  
+    ##        (Intercept) time
+    ## 06h_1            1    6
+    ## 06h_2            1    6
+    ## 06h_3            1    6
+    ## 06h_4            1    6
+    ## 12h_5            1   12
+    ## 12h_6            1   12
+    ## 12h_7            1   12
+    ## 12h_8            1   12
+    ## 18h_9            1   18
+    ## 18h_10           1   18
+    ## 18h_11           1   18
+    ## 24h_12           1   24
+    ## 24h_13           1   24
+    ## 24h_14           1   24
+    ## 48h_15           1   48
+    ## 48h_16           1   48
+    ## 48h_17           1   48
+    ## 48h_18           1   48
+    ## 72h_19           1   72
+    ## 72h_20           1   72
+    ## 72h_21           1   72
+    ## 72h_22           1   72
+    ## 96h_23           1   96
+    ## 96h_24           1   96
+    ## 96h_25           1   96
+    ## 96h_26           1   96
+    ## attr(,"assign")
+    ## [1] 0 1
 
-```{r fig.width=8, fig.height=5}
+### Histogram of distribution of adjusted p-values.
+
+``` r
 histogram_toptable(fit_time_cont$toptable,
                    type = "Linear",
                    .x = NULL)
 ```
 
-## Model 2: Polynomial spline fitting with 2 degrees of freedom   
+![](liver_necrodegreadomics_limma_files/figure-gfm/unnamed-chunk-12-1.png)<!-- -->
 
-```{r}
+## Model 2: Polynomial spline fitting with 2 degrees of freedom
+
+``` r
 fit_spline_df2 <- fit_limma_poly(type = "spline", 
                                 .x = 2,
                                 wide_imp = wide_imp, 
@@ -239,23 +255,55 @@ fit_spline_df2 <- fit_limma_poly(type = "spline",
                                 pval_cutoff = 0.05)
 ```
 
-### Design matrix  
+### Design matrix
 
-```{r}
+``` r
 fit_spline_df2$limma_fit$design
 ```
 
-### Histogram of distribution of adjusted p-values.  
+    ##        (Intercept)    cubic1      cubic2
+    ## 06h_1            1 0.0000000  0.00000000
+    ## 06h_2            1 0.0000000  0.00000000
+    ## 06h_3            1 0.0000000  0.00000000
+    ## 06h_4            1 0.0000000  0.00000000
+    ## 12h_5            1 0.1327616 -0.07293338
+    ## 12h_6            1 0.1327616 -0.07293338
+    ## 12h_7            1 0.1327616 -0.07293338
+    ## 12h_8            1 0.1327616 -0.07293338
+    ## 18h_9            1 0.2569291 -0.13615400
+    ## 18h_10           1 0.2569291 -0.13615400
+    ## 18h_11           1 0.2569291 -0.13615400
+    ## 24h_12           1 0.3639084 -0.17994912
+    ## 24h_13           1 0.3639084 -0.17994912
+    ## 24h_14           1 0.3639084 -0.17994912
+    ## 48h_15           1 0.5626509 -0.09612291
+    ## 48h_16           1 0.5626509 -0.09612291
+    ## 48h_17           1 0.5626509 -0.09612291
+    ## 48h_18           1 0.5626509 -0.09612291
+    ## 72h_19           1 0.4863833  0.29851135
+    ## 72h_20           1 0.4863833  0.29851135
+    ## 72h_21           1 0.4863833  0.29851135
+    ## 72h_22           1 0.4863833  0.29851135
+    ## 96h_23           1 0.2726107  0.84854962
+    ## 96h_24           1 0.2726107  0.84854962
+    ## 96h_25           1 0.2726107  0.84854962
+    ## 96h_26           1 0.2726107  0.84854962
+    ## attr(,"assign")
+    ## [1] 0 1 1
 
-```{r fig.width=8, fig.height=5}
+### Histogram of distribution of adjusted p-values.
+
+``` r
 histogram_toptable(fit_spline_df2$toptable,
                    type = "Spline",
                    .x = 2)
 ```
 
-## Model 3: Polynomial spline fitting with 3 degrees of freedom  
+![](liver_necrodegreadomics_limma_files/figure-gfm/unnamed-chunk-15-1.png)<!-- -->
 
-```{r}
+## Model 3: Polynomial spline fitting with 3 degrees of freedom
+
+``` r
 fit_spline_df3 <- fit_limma_poly(type = "spline", 
                                 .x = 3,
                                 wide_imp = wide_imp, 
@@ -263,27 +311,60 @@ fit_spline_df3 <- fit_limma_poly(type = "spline",
                                 pval_cutoff = 0.05)
 ```
 
-### Design matrix  
+### Design matrix
 
-```{r}
+``` r
 fit_spline_df3$limma_fit$design
 ```
 
-### Histogram of distribution of adjusted p-values.  
+    ##        (Intercept)      cubic1    cubic2     cubic3
+    ## 06h_1            1  0.00000000 0.0000000  0.0000000
+    ## 06h_2            1  0.00000000 0.0000000  0.0000000
+    ## 06h_3            1  0.00000000 0.0000000  0.0000000
+    ## 06h_4            1  0.00000000 0.0000000  0.0000000
+    ## 12h_5            1 -0.09214064 0.2543692 -0.1574666
+    ## 12h_6            1 -0.09214064 0.2543692 -0.1574666
+    ## 12h_7            1 -0.09214064 0.2543692 -0.1574666
+    ## 12h_8            1 -0.09214064 0.2543692 -0.1574666
+    ## 18h_9            1 -0.13550396 0.4556979 -0.2820987
+    ## 18h_10           1 -0.13550396 0.4556979 -0.2820987
+    ## 18h_11           1 -0.13550396 0.4556979 -0.2820987
+    ## 24h_12           1 -0.09470687 0.5639902 -0.3484042
+    ## 24h_13           1 -0.09470687 0.5639902 -0.3484042
+    ## 24h_14           1 -0.09470687 0.5639902 -0.3484042
+    ## 48h_15           1  0.41226688 0.4408764 -0.1813484
+    ## 48h_16           1  0.41226688 0.4408764 -0.1813484
+    ## 48h_17           1  0.41226688 0.4408764 -0.1813484
+    ## 48h_18           1  0.41226688 0.4408764 -0.1813484
+    ## 72h_19           1  0.37052446 0.3427579  0.2456920
+    ## 72h_20           1  0.37052446 0.3427579  0.2456920
+    ## 72h_21           1  0.37052446 0.3427579  0.2456920
+    ## 72h_22           1  0.37052446 0.3427579  0.2456920
+    ## 96h_23           1 -0.15430267 0.4050445  0.7492582
+    ## 96h_24           1 -0.15430267 0.4050445  0.7492582
+    ## 96h_25           1 -0.15430267 0.4050445  0.7492582
+    ## 96h_26           1 -0.15430267 0.4050445  0.7492582
+    ## attr(,"assign")
+    ## [1] 0 1 1 1
 
-```{r fig.width=8, fig.height=5}
+### Histogram of distribution of adjusted p-values.
+
+``` r
 histogram_toptable(fit_spline_df3$toptable,
                    type = "Spline",
                    .x = 3)
 ```
 
-# Intersection analyses  
+![](liver_necrodegreadomics_limma_files/figure-gfm/unnamed-chunk-18-1.png)<!-- -->
 
-The intersection analysis would allow to identify proteins that are exclusively identified by one of the models/approaches.  
+# Intersection analyses
 
-### Prep list of proteins identified by each model/approach for the intersection analysis.  
+The intersection analysis would allow to identify proteins that are
+exclusively identified by one of the models/approaches.
 
-```{r}
+### Prep list of proteins identified by each model/approach for the intersection analysis.
+
+``` r
 pot_degress <- c(2, 3)
 names(pot_degress) <- paste0(rep("Degr"), pot_degress)
 
@@ -292,10 +373,9 @@ spline_prots <- map(.x = pot_degress,
      type = "spline", wide_imp = wide_imp, wide_dat = wide_dat, pval_cutoff = 0.05)
 
 names(spline_prots) <- paste0(rep("Spline_"),names(spline_prots))
-
 ```
 
-```{r}
+``` r
 linear_prots <- fit_limma_tocomp(.x = 1,
      type = "linear", wide_imp = wide_imp, wide_dat = wide_dat, pval_cutoff = 0.05)
 
@@ -303,41 +383,67 @@ linear_prots <- list(Linear = linear_prots)
 
 large_list_1 <- c(spline_prots,
                   linear_prots)
+```
 
-```    
+## Upset plot for the intersection of proteins identified as associated with the regression models and an adjusted `p-value < 0.05`.
 
-## Upset plot for the intersection of proteins identified as associated with the regression models and an adjusted `p-value < 0.05`.  
-
-```{r fig.width=8, fig.height=4}
+``` r
 UpSetR::upset(UpSetR::fromList(large_list_1), nsets = 11, order.by = "freq")
 ```
 
-### Upset plots with `complexHeatmap` package are better for further processing the intersecting elements  
+![](liver_necrodegreadomics_limma_files/figure-gfm/unnamed-chunk-21-1.png)<!-- -->
 
-```{r}
+### Upset plots with `complexHeatmap` package are better for further processing the intersecting elements
+
+``` r
 comb_mat <- make_comb_mat(large_list_1, min_set_size = 1)
-```  
+```
 
-#### Combination matrix   
+#### Combination matrix
 
-```{r}
+``` r
 print(comb_mat)
 ```
 
-## Proteins that were detected by simple linear model and spline DF 2  
+    ## A combination matrix with 3 sets and 6 combinations.
+    ##   ranges of combination set size: c(2, 129).
+    ##   mode for the combination size: distinct.
+    ##   sets are on rows.
+    ## 
+    ## Combination sets are:
+    ##   Spline_Degr2 Spline_Degr3 Linear code size
+    ##              x            x      x  111   38
+    ##              x            x         110    2
+    ##              x                   x  101   68
+    ##              x                      100   19
+    ##                           x         010    4
+    ##                                  x  001  129
+    ## 
+    ## Sets are:
+    ##            set size
+    ##   Spline_Degr2  127
+    ##   Spline_Degr3   44
+    ##         Linear  235
 
-These proteins are those that can be considered to have a linear relationship with time, even if they were also detected by the spline DF 2 model.
+## Proteins that were detected by simple linear model and spline DF 2
 
-```{r}
+These proteins are those that can be considered to have a linear
+relationship with time, even if they were also detected by the spline DF
+2 model.
+
+``` r
 only_linear <- c(extract_comb(comb_mat, "001"),extract_comb(comb_mat, "101"))
 ```
-```{r}
+
+``` r
 length(only_linear)
 ```
 
-### Proteins with positive relation with Time  
+    ## [1] 197
 
-```{r message=FALSE, warning=FALSE}
+### Proteins with positive relation with Time
+
+``` r
 pos_linear <- fit_time_cont$toptable %>% 
   filter(ID %in% only_linear,
          logFC > 0)
@@ -351,7 +457,7 @@ poslin_bitr <- clusterProfiler::bitr(pos_linear$ID,
 pos_linear <- left_join(pos_linear, poslin_bitr, by = "ID")
 ```
 
-```{r fig.width=11, fig.height=12, warning=FALSE, message=FALSE}
+``` r
 vis_profs(data = wide_dat, 
           toptable = pos_linear, 
           pval_cutoff = 0.05, 
@@ -364,9 +470,11 @@ vis_profs(data = wide_dat,
   labs(caption = "Lower p-values indicate a stronger association Protein Expression vs Time") 
 ```
 
-### Proteins with negative relation with Time  
+![](liver_necrodegreadomics_limma_files/figure-gfm/unnamed-chunk-27-1.png)<!-- -->
 
-```{r message=FALSE, warning=FALSE}
+### Proteins with negative relation with Time
+
+``` r
 neg_linear <- fit_time_cont$toptable %>% 
   filter(ID %in% only_linear,
          logFC < 0)
@@ -385,7 +493,7 @@ neg_linear <- mutate(neg_linear,
                                      no = SYMBOL))
 ```
 
-```{r fig.width=11, fig.height=11, warning=FALSE, message=FALSE}
+``` r
 vis_profs(data = wide_dat, 
           toptable = neg_linear, 
           pval_cutoff = 0.05, 
@@ -398,16 +506,21 @@ vis_profs(data = wide_dat,
   labs(caption = "Lower p-values indicate a stronger association Protein Expression vs Time") 
 ```
 
-## Proteins that were detected only by splines with 2 DF  
+![](liver_necrodegreadomics_limma_files/figure-gfm/unnamed-chunk-29-1.png)<!-- -->
 
-```{r}
+## Proteins that were detected only by splines with 2 DF
+
+``` r
 only_2DF <- extract_comb(comb_mat, "100")
 ```
-```{r}
+
+``` r
 length(only_2DF)
 ```
 
-```{r message=FALSE, warning=FALSE}
+    ## [1] 19
+
+``` r
 df2_bitr <- clusterProfiler::bitr(fit_spline_df2$toptable$ID,
                                      fromType = "UNIPROT",
                                      toType = "SYMBOL", 
@@ -417,7 +530,7 @@ df2_bitr <- clusterProfiler::bitr(fit_spline_df2$toptable$ID,
 fit_spline_df2$toptable <- left_join(fit_spline_df2$toptable, df2_bitr, by = "ID")
 ```
 
-```{r fig.width=11, fig.height=11, warning=FALSE, message=FALSE}
+``` r
 vis_profs(data = wide_dat, 
           toptable = fit_spline_df2$toptable, 
           pval_cutoff = 0.05, 
@@ -430,16 +543,21 @@ vis_profs(data = wide_dat,
   labs(caption = "Lower p-values indicate a stronger association Protein Expression vs Spline model") 
 ```
 
-## Proteins that were detected only by splines with 2 and 3 DF  
+![](liver_necrodegreadomics_limma_files/figure-gfm/unnamed-chunk-33-1.png)<!-- -->
 
-```{r}
+## Proteins that were detected only by splines with 2 and 3 DF
+
+``` r
 only_3n2DF <- c(extract_comb(comb_mat, "010"),extract_comb(comb_mat, "110"))
 ```
-```{r}
+
+``` r
 length(only_3n2DF)
 ```
 
-```{r message=FALSE, warning=FALSE}
+    ## [1] 6
+
+``` r
 df3_bitr <- clusterProfiler::bitr(fit_spline_df3$toptable$ID,
                                      fromType = "UNIPROT",
                                      toType = "SYMBOL", 
@@ -449,7 +567,7 @@ df3_bitr <- clusterProfiler::bitr(fit_spline_df3$toptable$ID,
 fit_spline_df3$toptable <- left_join(fit_spline_df3$toptable, df3_bitr, by = "ID")
 ```
 
-```{r fig.width=11, fig.height=6, warning=FALSE, message=FALSE}
+``` r
 vis_profs(data = wide_dat, 
           toptable = fit_spline_df3$toptable, 
           pval_cutoff = 0.05, 
@@ -462,30 +580,33 @@ vis_profs(data = wide_dat,
   labs(caption = "Lower p-values indicate a stronger association Protein Expression vs Spline model") 
 ```
 
- 
+![](liver_necrodegreadomics_limma_files/figure-gfm/unnamed-chunk-37-1.png)<!-- -->
 
-# Exploratory Functional annotation  
+# Exploratory Functional annotation
 
-In order to explore the functional annotation of the proteins detected under different models, a 'relaxed' enrichment analysis was performed.  
+In order to explore the functional annotation of the proteins detected
+under different models, a ‘relaxed’ enrichment analysis was performed.
 
-The adjusted p-value cut-off of the over-representation test was set to `0.1` and for the universe of background proteins all human proteins were kept.  
+The adjusted p-value cut-off of the over-representation test was set to
+`0.1` and for the universe of background proteins all human proteins
+were kept.
 
-```{r}
+``` r
 selected_proteins <- list(`Positive linear` = pos_linear$ID,
                           `Negative linear` = neg_linear$ID,
                           `Spline 2DF` = only_2DF, 
                           `Spline 3DF` = only_3n2DF)
 ```
 
-```{r message=FALSE}
+``` r
 library(clusterProfiler)
 library(ReactomePA)
 library(org.Hs.eg.db)
-```  
+```
 
-## GO:MF  
+## <GO:MF>
 
-```{r}
+``` r
 group_comparison_functional<- compareCluster(geneCluster = selected_proteins, 
                                              fun = "enrichGO",
                                              OrgDb = org.Hs.eg.db,
@@ -500,13 +621,15 @@ group_comparison_functional<- compareCluster(geneCluster = selected_proteins,
                                              pool = FALSE)
 ```
 
-```{r fig.width=14, fig.height=6}
+``` r
 dotplot(group_comparison_functional)
 ```
 
-## GO:CC   
+![](liver_necrodegreadomics_limma_files/figure-gfm/unnamed-chunk-41-1.png)<!-- -->
 
-```{r}
+## <GO:CC>
+
+``` r
 group_comparison_functionalcc <- compareCluster(geneCluster = selected_proteins, 
                                              fun = "enrichGO",
                                              OrgDb = org.Hs.eg.db,
@@ -521,13 +644,15 @@ group_comparison_functionalcc <- compareCluster(geneCluster = selected_proteins,
                                              pool = FALSE)
 ```
 
-```{r fig.width=10, fig.height=6}
+``` r
 dotplot(group_comparison_functionalcc)
 ```
 
-## GO:BP  
+![](liver_necrodegreadomics_limma_files/figure-gfm/unnamed-chunk-43-1.png)<!-- -->
 
-```{r}
+## <GO:BP>
+
+``` r
 group_comparison_functionalbp <- compareCluster(geneCluster = selected_proteins, 
                                              fun = "enrichGO",
                                              OrgDb = org.Hs.eg.db,
@@ -542,13 +667,15 @@ group_comparison_functionalbp <- compareCluster(geneCluster = selected_proteins,
                                              pool = FALSE)
 ```
 
-```{r fig.width=10, fig.height=6}
+``` r
 dotplot(group_comparison_functionalbp)
 ```
 
-## Reactome    
+![](liver_necrodegreadomics_limma_files/figure-gfm/unnamed-chunk-45-1.png)<!-- -->
 
-```{r message=FALSE, warning=FALSE}
+## Reactome
+
+``` r
 translate <- function(x){
   df1 <- bitr(geneID = x,
               fromType = "UNIPROT",
@@ -564,8 +691,7 @@ selected_proteinsentrez <- map(selected_proteins,
                                translate)
 ```
 
-
-```{r}
+``` r
 group_comparison_functionalreac <- compareCluster(geneCluster = selected_proteinsentrez, 
                                              fun = "enrichPathway",
                                              organism = "human",
@@ -577,11 +703,8 @@ group_comparison_functionalreac <- compareCluster(geneCluster = selected_protein
                                              readable = FALSE)
 ```
 
-```{r fig.width=13, fig.height=6}
+``` r
 dotplot(group_comparison_functionalreac)
 ```
 
-
-
-
-
+![](liver_necrodegreadomics_limma_files/figure-gfm/unnamed-chunk-48-1.png)<!-- -->
