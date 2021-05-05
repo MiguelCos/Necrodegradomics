@@ -6,7 +6,7 @@ output: rmarkdown::github_document #html_document
 ---
 
 ```{r setup, include=FALSE, fig.width=12, fig.height=12}
-knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, error = TRUE)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, error = FALSE)
 
 library(tidyverse)
 library(ComplexHeatmap)

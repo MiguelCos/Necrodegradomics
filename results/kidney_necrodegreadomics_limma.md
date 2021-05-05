@@ -2,7 +2,7 @@ Kidney Necrodegradomics - Pinpointing proteins with
 pseudo-increased/decreased abudance using `limma`
 ================
 Miguel Cosenza
-04 May, 2021
+05 May, 2021
 
 # Pre-processing and normalization
 
@@ -92,47 +92,27 @@ if(!file.exists(here::here("results/msstas_rds/kidney_summ_norm_object.rds"))){
 source(here::here("scr/msstats_summ_norm2_expression_matrix.R"))
 ```
 
-    ## Error in file(filename, "r", encoding = encoding): cannot open the connection
-
 ``` r
 tab_wide_msts_data <- msstats_out2_wide(normalized_data)  
-```
 
-    ## Error in msstats_out2_wide(normalized_data): could not find function "msstats_out2_wide"
-
-``` r
 # Create matrix and median normalization with proDA ----
 
 tomat <- tab_wide_msts_data %>% 
       tibble::column_to_rownames("ID") %>% 
       as.matrix()
-```
 
-    ## Error in h(simpleError(msg, call)): error in evaluating the argument 'x' in selecting a method for function 'as.matrix': object 'tab_wide_msts_data' not found
-
-``` r
 tomat_norm <- median_normalization(tomat)
-```
 
-    ## Error in median_normalization(tomat): object 'tomat' not found
-
-``` r
 tab_wide_norm_data <- tomat_norm %>% 
       as.data.frame() %>%
       tibble::rownames_to_column("ID")
-```
 
-    ## Error in h(simpleError(msg, call)): error in evaluating the argument 'x' in selecting a method for function 'as.data.frame': object 'tomat_norm' not found
-
-``` r
 ## Save expression matrix before imputation ----
 
 write_delim(x = tab_wide_norm_data, 
             file = here::here("results/msstats_log2_proda_norm_expr_mat_ncro_kidney.txt"),
             delim = "\t")
 ```
-
-    ## Error in is.data.frame(x): object 'tab_wide_norm_data' not found
 
 # Explore missing values
 
@@ -142,7 +122,7 @@ vis_miss(tab_wide_msts_data) +
   theme(axis.text.x = element_text(angle = 90))
 ```
 
-    ## Error in test_if_dataframe(x): object 'tab_wide_msts_data' not found
+![](kidney_necrodegreadomics_limma_files/figure-gfm/unnamed-chunk-6-1.png)<!-- -->
 
 Random forest imputation was performed in order to run the linear
 models.
@@ -151,11 +131,8 @@ models.
 
 ``` r
 t_mat <- t(tomat_norm)
-```
 
-    ## Error in h(simpleError(msg, call)): error in evaluating the argument 'x' in selecting a method for function 't': object 'tomat_norm' not found
 
-``` r
 if(!file.exists(here::here("results/msstas_rds/kidney_imputation_object.rds"))){
       
       cl <- makeCluster(8)
