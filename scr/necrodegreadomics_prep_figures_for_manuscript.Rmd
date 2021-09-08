@@ -1,0 +1,803 @@
+---
+title: "Necrodegradomics - Prep figures for manuscript"
+author: "Miguel Cosenza"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: rmarkdown::github_document #html_document 
+---
+
+```{r setup, include=FALSE, fig.width=12, fig.height=12}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, error = FALSE)
+
+library(tidyverse)
+library(ComplexHeatmap)
+
+library(MSstats)
+library(dplyr)
+library(here)
+library(readr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(proDA)
+library(tibble)
+library(parallel)
+library(naniar)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+source(here::here("scr/function_fit_time_course_limma.R"))
+#source(here::here("function_compare_spline_poly_appr.R"))
+
+```
+
+# Fitting linear models with `limma`
+
+Three (3) types of models will be applied to pinpoint proteins with three different behaviors across time.
+
+-   Model 1: Time as a continuous variable: will identify proteins that either have linear 'increased' or 'decreased' behavior over time.
+-   Model 2: Polynomial spline fitting with 2 degrees of freedom: will catch proteins that have a maximal or minimum peak at one time point.
+-   Model 3: Polynomial spline fitting with 3 degrees of freedom: will catch proteins that have a 'sigmoidal' behavior across time.
+
+## Load expression matrices
+
+### Liver
+
+```{r}
+wide_imp_liv <- read_delim(here::here("results/msstats_log2_norm_expr_mat_ncro_liver_imputed.txt"),
+                       delim = "\t")
+
+wide_dat_liv <- read_delim(here::here("results/msstats_log2_proda_norm_expr_mat_ncro_liver.txt"),
+                       delim = "\t")
+```
+
+#### Model 1: Time as a continuous variable
+
+```{r}
+fit_time_cont_liv <- fit_limma_poly(type = "linear", 
+                                .x = 2,
+                                wide_imp = wide_imp_liv, 
+                                wide_dat = wide_dat_liv,
+                                pval_cutoff = 0.05)
+```  
+
+##### Histogram of distribution of adjusted p-values.
+
+```{r}
+
+histogram_toptable(fit_time_cont_liv$toptable,
+                   type = "Linear",
+                   .x = NULL)
+```
+
+#### Model 2: Polynomial spline fitting with 2 degrees of freedom
+
+```{r}
+fit_spline_df2_liv <- fit_limma_poly(type = "spline", 
+                                .x = 2,
+                                wide_imp = wide_imp_liv, 
+                                wide_dat = wide_dat_liv,
+                                pval_cutoff = 0.05)
+```
+
+##### Histogram of distribution of adjusted p-values.
+
+```{r}
+histogram_toptable(fit_spline_df2_liv$toptable,
+                   type = "Spline",
+                   .x = 2)
+```
+
+## Model 3: Polynomial spline fitting with 3 degrees of freedom  
+
+```{r}
+fit_spline_df3_liv <- fit_limma_poly(type = "spline", 
+                                .x = 3,
+                                wide_imp = wide_imp_liv, 
+                                wide_dat = wide_dat_liv,  
+                                pval_cutoff = 0.05)
+```
+
+
+#### Intersection analyses
+
+The intersection analysis would allow to identify proteins that are exclusively identified by one of the models/approaches.
+
+##### Prep list of proteins identified by each model/approach for the intersection analysis.
+
+```{r}
+pot_degress <- c(2, 3)
+names(pot_degress) <- paste0(rep("Degr"), pot_degress)
+
+spline_prots_liv <- map(.x = pot_degress, 
+    .f = fit_limma_tocomp,
+     type = "spline", wide_imp = wide_imp_liv, wide_dat = wide_dat_liv, pval_cutoff = 0.05)
+
+names(spline_prots_liv) <- paste0(rep("Spline_"),names(spline_prots_liv))
+
+```
+
+```{r}
+linear_prots_liv <- fit_limma_tocomp(.x = 1,
+     type = "linear", wide_imp = wide_imp_liv, wide_dat = wide_dat_liv, pval_cutoff = 0.05)
+
+linear_prots_liv <- list(Linear = linear_prots_liv)
+
+large_list_1_liv <- c(spline_prots_liv,
+                      linear_prots_liv)
+
+```
+
+##### Upset plot for the intersection of proteins identified as associated with the regression models and an adjusted `p-value < 0.05`.
+
+```{r fig.width=8, fig.height=4}
+UpSetR::upset(UpSetR::fromList(large_list_1_liv), nsets = 11, order.by = "freq")
+```
+
+##### Upset plots with `complexHeatmap` package are better for further processing the intersecting elements
+
+```{r}
+comb_mat_liv <- make_comb_mat(large_list_1_liv, min_set_size = 1)
+```
+
+##### Combination matrix
+
+```{r}
+print(comb_mat_liv)
+```
+
+#### Proteins that were detected by simple linear model and spline DF 2
+
+These proteins are those that can be considered to have a linear relationship with time, even if they were also detected by the spline DF 2 model.
+
+```{r}
+only_linear_liv <- c(extract_comb(comb_mat_liv, "001"),extract_comb(comb_mat_liv, "101"))
+```
+
+```{r}
+length(only_linear_liv)
+```
+
+### Proteins with positive relation with Time
+
+```{r message=FALSE, warning=FALSE}
+pos_linear_liv <- fit_time_cont_liv$toptable %>% 
+  filter(ID %in% only_linear_liv,
+         logFC > 0)
+
+poslin_bitr_liv <- clusterProfiler::bitr(pos_linear_liv$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+pos_linear_liv <- left_join(pos_linear_liv, poslin_bitr_liv, by = "ID")
+```
+
+```{r fig.width=6, fig.height=4.5, warning=FALSE, message=FALSE}
+vis_profs_2(data = wide_dat_liv, 
+          toptable = pos_linear_liv, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_liv$fitted_values, 
+          method = "lm",
+          interesting = pos_linear_liv$ID,
+          leg_pos = "none")
+```
+
+### Proteins with negative relation with Time
+
+```{r message=FALSE, warning=FALSE}
+neg_linear_liv <- fit_time_cont_liv$toptable %>% 
+  filter(ID %in% only_linear_liv,
+         logFC < 0)
+
+poslin_bitr_liv <- clusterProfiler::bitr(neg_linear_liv$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+neg_linear_liv <- left_join(neg_linear_liv, poslin_bitr_liv, by = "ID")
+```
+
+```{r fig.width=6, fig.height=4.5, warning=FALSE, message=FALSE}
+vis_profs_2(data = wide_dat_liv, 
+          toptable = neg_linear_liv, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_liv$fitted_values, 
+          method = "lm",
+          interesting = neg_linear_liv$ID,
+          leg_pos = "none") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 1, size=8, angle = 45),
+                          panel.background = element_blank(),
+                          panel.grid.major = element_line(color = "grey"),
+                          panel.border = element_rect(colour = "black", fill=NA, size=1),
+                          legend.position = "none",
+                          axis.title.y = element_blank())
+```
+
+```{r fig.width=6, fig.height=4.5, warning=FALSE, message=FALSE}
+up_liv <- vis_profs_2(data = wide_dat_liv, 
+          toptable = pos_linear_liv, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_liv$fitted_values, 
+          method = "lm",
+          interesting = pos_linear_liv$ID,
+          leg_pos = "none")
+down_liv <- vis_profs_2(data = wide_dat_liv, 
+          toptable = neg_linear_liv, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_liv$fitted_values, 
+          method = "lm",
+          interesting = neg_linear_liv$ID,
+          leg_pos = "none") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 1, size=8, angle = 45),
+                          panel.background = element_blank(),
+                          panel.grid.major = element_line(color = "grey"),
+                          panel.border = element_rect(colour = "black", fill=NA, size=1),
+                          legend.position = "none",
+                          axis.title.y = element_blank())
+```
+
+```{r fig.width=10, fig.height=4, warning=FALSE, message=FALSE}
+cowplot::plot_grid(up_liv,down_liv, ncol = 2)
+```
+
+```{r}
+ggsave(plot = cowplot::plot_grid(up_liv,down_liv, ncol = 2), 
+       filename = here::here("figures/top_proteins_liver.tiff"), 
+       device = "tiff",
+       units = "mm",
+       width = 190,
+       height = 80)
+```
+
+### Kidney
+
+```{r}
+wide_imp_kid <- read_delim(here::here("results/msstats_log2_norm_expr_mat_ncro_kidney_imputed.txt"),
+                       delim = "\t")
+
+wide_dat_kid <- read_delim(here::here("results/msstats_log2_proda_norm_expr_mat_ncro_kidney.txt"),
+                       delim = "\t")
+```
+
+#### Model 1: Time as a continuous variable
+
+```{r}
+fit_time_cont_kid <- fit_limma_poly(type = "linear", 
+                                .x = 2,
+                                wide_imp = wide_imp_kid, 
+                                wide_dat = wide_dat_kid,
+                                pval_cutoff = 0.05)
+```  
+
+##### Histogram of distribution of adjusted p-values.
+
+```{r}
+
+histogram_toptable(fit_time_cont_kid$toptable,
+                   type = "Linear",
+                   .x = NULL)
+```
+
+#### Model 2: Polynomial spline fitting with 2 degrees of freedom
+
+```{r}
+fit_spline_df2_kid <- fit_limma_poly(type = "spline", 
+                                .x = 2,
+                                wide_imp = wide_imp_kid, 
+                                wide_dat = wide_dat_kid,
+                                pval_cutoff = 0.05)
+```
+
+##### Histogram of distribution of adjusted p-values.
+
+```{r}
+histogram_toptable(fit_spline_df2_kid$toptable,
+                   type = "Spline",
+                   .x = 2)
+```
+
+#### Model 3: Polynomial spline fitting with 3 degrees of freedom  
+
+```{r}
+fit_spline_df3_kid <- fit_limma_poly(type = "spline", 
+                                .x = 3,
+                                wide_imp = wide_imp_kid, 
+                                wide_dat = wide_dat_kid,  
+                                pval_cutoff = 0.05)
+```
+
+
+#### Intersection analyses
+
+The intersection analysis would allow to identify proteins that are exclusively identified by one of the models/approaches.
+
+##### Prep list of proteins identified by each model/approach for the intersection analysis.
+
+```{r}
+pot_degress <- c(2, 3)
+names(pot_degress) <- paste0(rep("Degr"), pot_degress)
+
+spline_prots_kid <- map(.x = pot_degress, 
+    .f = fit_limma_tocomp,
+     type = "spline", wide_imp = wide_imp_kid, wide_dat = wide_dat_kid, pval_cutoff = 0.05)
+
+names(spline_prots_kid) <- paste0(rep("Spline_"),names(spline_prots_kid))
+
+```
+
+```{r}
+linear_prots_kid <- fit_limma_tocomp(.x = 1,
+     type = "linear", wide_imp = wide_imp_kid, wide_dat = wide_dat_kid, pval_cutoff = 0.05)
+
+linear_prots_kid <- list(Linear = linear_prots_kid)
+
+large_list_1_kid <- c(spline_prots_kid,
+                      linear_prots_kid)
+
+```
+
+##### Upset plot for the intersection of proteins identified as associated with the regression models and an adjusted `p-value < 0.05`.
+
+```{r fig.width=8, fig.height=4}
+UpSetR::upset(UpSetR::fromList(large_list_1_kid), nsets = 11, order.by = "freq")
+```
+
+##### Upset plots with `complexHeatmap` package are better for further processing the intersecting elements
+
+```{r}
+comb_mat_kid <- make_comb_mat(large_list_1_kid, min_set_size = 1)
+```
+
+##### Combination matrix
+
+```{r}
+print(comb_mat_kid)
+```
+
+#### Proteins that were detected by simple linear model and spline DF 2
+
+These proteins are those that can be considered to have a linear relationship with time, even if they were also detected by the spline DF 2 model.
+
+```{r}
+only_linear_kid <- c(extract_comb(comb_mat_kid, "001"),extract_comb(comb_mat_kid, "101"))
+```
+
+```{r}
+length(only_linear_kid)
+```
+
+### Proteins with positive relation with Time
+
+```{r message=FALSE, warning=FALSE}
+pos_linear_kid <- fit_time_cont_kid$toptable %>% 
+  filter(ID %in% only_linear_kid,
+         logFC > 0)
+
+poslin_bitr_kid <- clusterProfiler::bitr(pos_linear_kid$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+pos_linear_kid <- left_join(pos_linear_kid, poslin_bitr_kid, by = "ID")
+```
+```{r fig.width=6, fig.height=4.5, warning=FALSE, message=FALSE}
+vis_profs_2(data = wide_dat_kid, 
+          toptable = pos_linear_kid, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_kid$fitted_values, 
+          method = "lm",
+          interesting = pos_linear_kid$ID,
+          leg_pos = "none")
+```
+
+### Proteins with negative relation with Time
+
+```{r message=FALSE, warning=FALSE}
+neg_linear_kid <- fit_time_cont_kid$toptable %>% 
+  filter(ID %in% only_linear_kid,
+         logFC < 0)
+
+poslin_bitr_kid <- clusterProfiler::bitr(neg_linear_kid$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+neg_linear_kid <- left_join(neg_linear_kid, poslin_bitr_kid, by = "ID")
+```
+
+```{r fig.width=6, fig.height=4.5, warning=FALSE, message=FALSE}
+vis_profs_2(data = wide_dat_kid, 
+          toptable = neg_linear_kid, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_kid$fitted_values, 
+          method = "lm",
+          interesting = neg_linear_kid$ID,
+          leg_pos = "none") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 1, size=8, angle = 45),
+                          panel.background = element_blank(),
+                          panel.grid.major = element_line(color = "grey"),
+                          panel.border = element_rect(colour = "black", fill=NA, size=1),
+                          legend.position = "none",
+                          axis.title.y = element_blank())
+```
+
+```{r fig.width=6, fig.height=4.5, warning=FALSE, message=FALSE}
+up_kid <- vis_profs_2(data = wide_dat_kid, 
+          toptable = pos_linear_kid, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_kid$fitted_values, 
+          method = "lm",
+          interesting = pos_linear_kid$ID,
+          leg_pos = "none")
+down_kid <- vis_profs_2(data = wide_dat_kid, 
+          toptable = neg_linear_kid, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_kid$fitted_values, 
+          method = "lm",
+          interesting = neg_linear_kid$ID,
+          leg_pos = "none") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 1, size=8, angle = 45),
+                          panel.background = element_blank(),
+                          panel.grid.major = element_line(color = "grey"),
+                          panel.border = element_rect(colour = "black", fill=NA, size=1),
+                          legend.position = "none",
+                          axis.title.y = element_blank())
+```
+
+```{r fig.width=10, fig.height=4, warning=FALSE, message=FALSE}
+cowplot::plot_grid(up_kid,down_kid, ncol = 2)
+```
+
+```{r}
+ggsave(plot = cowplot::plot_grid(up_kid,down_kid, ncol = 2), 
+       filename = here::here("figures/top_proteins_kidney.tiff"), 
+       device = "tiff",
+       units = "mm",
+       width = 190,
+       height = 80)
+```
+
+### Lung
+
+```{r}
+wide_imp_lun <- read_delim(here::here("results/msstats_log2_norm_expr_mat_ncro_lung_imputed.txt"),
+                       delim = "\t")
+
+wide_dat_lun <- read_delim(here::here("results/msstats_log2_proda_norm_expr_mat_ncro_lung.txt"),
+                       delim = "\t")
+```
+
+#### Model 1: Time as a continuous variable
+
+```{r}
+fit_time_cont_lun <- fit_limma_poly(type = "linear", 
+                                .x = 2,
+                                wide_imp = wide_imp_lun, 
+                                wide_dat = wide_dat_lun,
+                                pval_cutoff = 0.05)
+```  
+
+##### Histogram of distribution of adjusted p-values.
+
+```{r}
+
+histogram_toptable(fit_time_cont_lun$toptable,
+                   type = "Linear",
+                   .x = NULL)
+```
+
+#### Model 2: Polynomial spline fitting with 2 degrees of freedom
+
+```{r}
+fit_spline_df2_lun <- fit_limma_poly(type = "spline", 
+                                .x = 2,
+                                wide_imp = wide_imp_lun, 
+                                wide_dat = wide_dat_lun,
+                                pval_cutoff = 0.05)
+```
+
+##### Histogram of distribution of adjusted p-values.
+
+```{r}
+histogram_toptable(fit_spline_df2_lun$toptable,
+                   type = "Spline",
+                   .x = 2)
+```
+
+#### Model 3: Polynomial spline fitting with 3 degrees of freedom  
+
+```{r}
+fit_spline_df3_lun <- fit_limma_poly(type = "spline", 
+                                .x = 3,
+                                wide_imp = wide_imp_lun, 
+                                wide_dat = wide_dat_lun,  
+                                pval_cutoff = 0.05)
+```
+
+
+#### Intersection analyses
+
+The intersection analysis would allow to identify proteins that are exclusively identified by one of the models/approaches.
+
+##### Prep list of proteins identified by each model/approach for the intersection analysis.
+
+```{r}
+pot_degress <- c(2, 3)
+names(pot_degress) <- paste0(rep("Degr"), pot_degress)
+
+spline_prots_lun <- map(.x = pot_degress, 
+    .f = fit_limma_tocomp,
+     type = "spline", wide_imp = wide_imp_lun, wide_dat = wide_dat_lun, pval_cutoff = 0.05)
+
+names(spline_prots_lun) <- paste0(rep("Spline_"),names(spline_prots_lun))
+
+```
+
+```{r}
+linear_prots_lun <- fit_limma_tocomp(.x = 1,
+     type = "linear", wide_imp = wide_imp_lun, wide_dat = wide_dat_lun, pval_cutoff = 0.05)
+
+linear_prots_lun <- list(Linear = linear_prots_lun)
+
+large_list_1_lun <- c(spline_prots_lun,
+                      linear_prots_lun)
+
+```
+
+##### Upset plot for the intersection of proteins identified as associated with the regression models and an adjusted `p-value < 0.05`.
+
+```{r fig.width=8, fig.height=4}
+UpSetR::upset(UpSetR::fromList(large_list_1_lun), nsets = 11, order.by = "freq")
+```
+
+##### Upset plots with `complexHeatmap` package are better for further processing the intersecting elements
+
+```{r}
+comb_mat_lun <- make_comb_mat(large_list_1_lun, min_set_size = 1)
+```
+
+##### Combination matrix
+
+```{r}
+print(comb_mat_lun)
+```
+
+#### Proteins that were detected by simple linear model and spline DF 2
+
+These proteins are those that can be considered to have a linear relationship with time, even if they were also detected by the spline DF 2 model.
+
+```{r}
+only_linear_lun <- c(extract_comb(comb_mat_lun, "100"),
+                 extract_comb(comb_mat_lun, "101"),
+                 extract_comb(comb_mat_lun, "111"))
+```
+
+```{r}
+length(only_linear_lun)
+```
+
+### Proteins with positive relation with Time
+
+```{r message=FALSE, warning=FALSE}
+pos_linear_lun <- fit_time_cont_lun$toptable %>% 
+  filter(ID %in% only_linear_lun,
+         logFC > 0)
+
+poslin_bitr_lun <- clusterProfiler::bitr(pos_linear_lun$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+pos_linear_lun <- left_join(pos_linear_lun, poslin_bitr_lun, by = "ID")
+```
+
+```{r fig.width=6, fig.height=4.5, warning=FALSE, message=FALSE}
+vis_profs_2(data = wide_dat_lun, 
+          toptable = pos_linear_lun, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_lun$fitted_values, 
+          method = "lm",
+          interesting = pos_linear_lun$ID,
+          leg_pos = "none")
+```
+
+### Proteins with negative relation with Time
+
+```{r message=FALSE, warning=FALSE}
+neg_linear_lun <- fit_time_cont_lun$toptable %>% 
+  filter(ID %in% only_linear_lun,
+         logFC < 0)
+
+poslin_bitr_lun <- clusterProfiler::bitr(neg_linear_lun$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+neg_linear_lun <- left_join(neg_linear_lun, poslin_bitr_lun, by = "ID")
+```
+
+```{r fig.width=6, fig.height=4.5, warning=FALSE, message=FALSE}
+vis_profs_2(data = wide_dat_lun, 
+          toptable = neg_linear_lun, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_lun$fitted_values, 
+          method = "lm",
+          interesting = neg_linear_lun$ID,
+          leg_pos = "none") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 1, size=8, angle = 45),
+                          panel.background = element_blank(),
+                          panel.grid.major = element_line(color = "grey"),
+                          panel.border = element_rect(colour = "black", fill=NA, size=1),
+                          legend.position = "none",
+                          axis.title.y = element_blank())
+```
+
+```{r fig.width=6, fig.height=4.5, warning=FALSE, message=FALSE}
+up_lun <- vis_profs_2(data = wide_dat_lun, 
+          toptable = pos_linear_lun, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_lun$fitted_values, 
+          method = "lm",
+          interesting = pos_linear_lun$ID,
+          leg_pos = "none")
+down_lun <- vis_profs_2(data = wide_dat_lun, 
+          toptable = neg_linear_lun, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_lun$fitted_values, 
+          method = "lm",
+          interesting = neg_linear_lun$ID,
+          leg_pos = "none") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 1, size=8, angle = 45),
+                          panel.background = element_blank(),
+                          panel.grid.major = element_line(color = "grey"),
+                          panel.border = element_rect(colour = "black", fill=NA, size=1),
+                          legend.position = "none",
+                          axis.title.y = element_blank())
+```
+
+```{r fig.width=10, fig.height=4, warning=FALSE, message=FALSE}
+cowplot::plot_grid(up_lun,down_lun, ncol = 2, rel_heights = c(10,0.5))
+```
+```{r}
+ggsave(plot = cowplot::plot_grid(up_lun,down_lun, ncol = 2), 
+       filename = here::here("figures/top_proteins_lung.tiff"), 
+       device = "tiff",
+       units = "mm",
+       width = 190,
+       height = 80)
+```
+
+
+# Exploratory Functional annotation
+
+In order to explore the functional annotation of the proteins detected under different models, a 'relaxed' enrichment analysis was performed.
+
+The adjusted p-value cut-off of the over-representation test was set to `0.1` and for the universe of background proteins all human proteins were kept.
+
+```{r}
+selected_proteins <- list(`Positive linear` = pos_linear$ID,
+                          `Negative linear` = neg_linear$ID,
+                          `Spline 2DF` = only_2DF, 
+                          `Spline 3DF` = only_3n2DF)
+```
+
+```{r message=FALSE}
+library(clusterProfiler)
+library(ReactomePA)
+library(org.Hs.eg.db)
+```
+
+## <GO:MF>
+
+```{r}
+group_comparison_functional<- compareCluster(geneCluster = selected_proteins, 
+                                             fun = "enrichGO",
+                                             OrgDb = org.Hs.eg.db,
+                                             keyType = "UNIPROT",
+                                             ont = "MF",
+                                             pvalueCutoff = 0.1,
+                                             pAdjustMethod = "BH", 
+                                             qvalueCutoff = 0.2,
+                                             minGSSize = 10,
+                                             maxGSSize = 500,
+                                             readable = FALSE,
+                                             pool = FALSE)
+```
+
+```{r fig.width=12, fig.height=6}
+dotplot(group_comparison_functional)
+```
+
+## <GO:CC>
+
+```{r}
+group_comparison_functionalcc <- compareCluster(geneCluster = selected_proteins, 
+                                             fun = "enrichGO",
+                                             OrgDb = org.Hs.eg.db,
+                                             keyType = "UNIPROT",
+                                             ont = "CC",
+                                             pvalueCutoff = 0.1,
+                                             pAdjustMethod = "BH", 
+                                             qvalueCutoff = 0.2,
+                                             minGSSize = 10,
+                                             maxGSSize = 500,
+                                             readable = FALSE,
+                                             pool = FALSE)
+```
+
+```{r fig.width=10, fig.height=6}
+dotplot(group_comparison_functionalcc)
+```
+
+## <GO:BP>
+
+```{r}
+group_comparison_functionalbp <- compareCluster(geneCluster = selected_proteins, 
+                                             fun = "enrichGO",
+                                             OrgDb = org.Hs.eg.db,
+                                             keyType = "UNIPROT",
+                                             ont = "BP",
+                                             pvalueCutoff = 0.1,
+                                             pAdjustMethod = "BH", 
+                                             qvalueCutoff = 0.2,
+                                             minGSSize = 10,
+                                             maxGSSize = 500,
+                                             readable = FALSE,
+                                             pool = FALSE)
+```
+
+```{r fig.width=10, fig.height=6}
+dotplot(group_comparison_functionalbp)
+```
+
+## Reactome
+
+```{r message=FALSE, warning=FALSE}
+translate <- function(x){
+  df1 <- bitr(geneID = x,
+              fromType = "UNIPROT",
+              toType = "ENTREZID",
+              OrgDb = org.Hs.eg.db,
+              drop = TRUE) %>% 
+    pull(ENTREZID)
+  
+  return(df1)
+}
+
+selected_proteinsentrez <- map(selected_proteins,
+                               translate)
+```
+
+```{r}
+group_comparison_functionalreac <- compareCluster(geneCluster = selected_proteinsentrez, 
+                                             fun = "enrichPathway",
+                                             organism = "human",
+                                             pvalueCutoff = 0.1,
+                                             pAdjustMethod = "BH", 
+                                             qvalueCutoff = 0.2,
+                                             minGSSize = 10,
+                                             maxGSSize = 500,
+                                             readable = FALSE)
+```
+
+```{r fig.width=10, fig.height=6}
+dotplot(group_comparison_functionalreac)
+```
