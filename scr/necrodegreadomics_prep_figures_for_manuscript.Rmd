@@ -539,7 +539,10 @@ names(pot_degress) <- paste0(rep("Degr"), pot_degress)
 
 spline_prots_lun <- map(.x = pot_degress, 
     .f = fit_limma_tocomp,
-     type = "spline", wide_imp = wide_imp_lun, wide_dat = wide_dat_lun, pval_cutoff = 0.05)
+     type = "spline", 
+    wide_imp = wide_imp_lun, 
+    wide_dat = wide_dat_lun, 
+    pval_cutoff = 0.05)
 
 names(spline_prots_lun) <- paste0(rep("Spline_"),names(spline_prots_lun))
 
@@ -579,8 +582,8 @@ print(comb_mat_lun)
 These proteins are those that can be considered to have a linear relationship with time, even if they were also detected by the spline DF 2 model.
 
 ```{r}
-only_linear_lun <- c(extract_comb(comb_mat_lun, "100"),
-                 extract_comb(comb_mat_lun, "101"),
+only_linear_lun <- c(extract_comb(comb_mat_lun, "101"),
+                     #extract_comb(comb_mat_lun, "100"),
                  extract_comb(comb_mat_lun, "111"))
 ```
 
@@ -683,6 +686,61 @@ ggsave(plot = cowplot::plot_grid(up_lun,down_lun, ncol = 2),
        units = "mm",
        width = 190,
        height = 80)
+```
+
+## Tabular results from limma  
+
+```{r}
+top_table_liver <- bind_rows(fit_time_cont_liv$toptable %>% mutate(organ = "liver")) %>%
+          filter(ID %in% only_linear_liv) %>%
+          mutate(time_relationship = case_when(logFC < 0 ~ "decreased",
+                                               logFC > 0 ~ "pseudo-enriched"))
+
+top_table_kidney <- bind_rows(fit_time_cont_kid$toptable %>% mutate(organ = "kidney")) %>%
+          filter(ID %in% only_linear_kid) %>%
+          mutate(time_relationship = case_when(logFC < 0 ~ "decreased",
+                                               logFC > 0 ~ "pseudo-enriched"))
+
+top_table_lung <- bind_rows(fit_time_cont_lun$toptable %>% mutate(organ = "lung")) %>%
+          filter(ID %in% only_linear_lun) %>%
+          mutate(time_relationship = case_when(logFC < 0 ~ "decreased",
+                                               logFC > 0 ~ "pseudo-enriched"))
+
+# general table
+
+top_table_general <- bind_rows(top_table_kidney,
+                               top_table_liver,
+                               top_table_lung)
+
+# get gene symbols from uniprot IDs
+
+toptable_bitr <- clusterProfiler::bitr(top_table_general$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+# apend gene symbols to general top table
+
+top_table_final <- left_join(top_table_general, toptable_bitr) %>% 
+          dplyr::rename(UNIPROT_ID = ID)
+
+if(!file.exists(here::here("figures/limma_general_top_table_0.05_fdr.csv"))){
+          write_csv(x = top_table_final,
+                    file = here::here("figures/limma_general_top_table_0.05_fdr.csv"))
+}
+
+if(!file.exists(here::here("figures/limma_general_top_table_0.05_fdr.tsv"))){
+          write_tsv(x = top_table_final,
+                    file = here::here("figures/limma_general_top_table_0.05_fdr.tsv"))
+}
+
+if(!file.exists(here::here("figures/limma_general_top_table_0.05_fdrxls.csv"))){
+          write_excel_csv(x = top_table_final,
+                    file = here::here("figures/limma_general_top_table_0.05_fdrxls.csv"))
+}
+
+
 ```
 
 # Exploratory Functional annotation
