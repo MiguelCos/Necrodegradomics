@@ -169,7 +169,7 @@ length(only_linear_liv)
 
 ``` r
 pos_linear_liv <- fit_time_cont_liv$toptable %>% 
-  filter(ID %in% only_linear_liv,
+  filter(adj.P.Val <= 0.05,
          logFC > 0)
 
 poslin_bitr_liv <- clusterProfiler::bitr(pos_linear_liv$ID,
@@ -189,6 +189,7 @@ vis_profs_2(data = wide_dat_liv,
           fited_values = fit_time_cont_liv$fitted_values, 
           method = "lm",
           interesting = pos_linear_liv$ID,
+          exclude = "Q9H993",
           leg_pos = "none")
 ```
 
@@ -198,7 +199,7 @@ vis_profs_2(data = wide_dat_liv,
 
 ``` r
 neg_linear_liv <- fit_time_cont_liv$toptable %>% 
-  filter(ID %in% only_linear_liv,
+  filter(adj.P.Val <= 0.05,
          logFC < 0)
 
 poslin_bitr_liv <- clusterProfiler::bitr(neg_linear_liv$ID,
@@ -237,6 +238,7 @@ up_liv <- vis_profs_2(data = wide_dat_liv,
           fited_values = fit_time_cont_liv$fitted_values, 
           method = "lm",
           interesting = pos_linear_liv$ID,
+          exclude = "Q9H993",
           leg_pos = "none")
 down_liv <- vis_profs_2(data = wide_dat_liv, 
           toptable = neg_linear_liv, 
@@ -674,7 +676,7 @@ length(only_linear_lun)
 
 ``` r
 pos_linear_lun <- fit_time_cont_lun$toptable %>% 
-  filter(ID %in% only_linear_lun,
+  filter(adj.P.Val <= 0.05, # try adj.P.Val <= 0.05 / ID %in% only_linear_lun
          logFC > 0)
 
 poslin_bitr_lun <- clusterProfiler::bitr(pos_linear_lun$ID,
