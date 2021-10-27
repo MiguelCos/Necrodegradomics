@@ -117,8 +117,11 @@ names(spline_prots_liv) <- paste0(rep("Spline_"),names(spline_prots_liv))
 ```
 
 ```{r}
-linear_prots_liv <- fit_limma_tocomp(.x = 1,
-     type = "linear", wide_imp = wide_imp_liv, wide_dat = wide_dat_liv, pval_cutoff = 0.05)
+linear_prots_liv <- fit_limma_tocomp(.x = 2,
+                                     type = "linear", 
+                                     wide_imp = wide_imp_liv, 
+                                     wide_dat = wide_dat_liv, 
+                                     pval_cutoff = 0.05)
 
 linear_prots_liv <- list(Linear = linear_prots_liv)
 
@@ -332,8 +335,11 @@ names(spline_prots_kid) <- paste0(rep("Spline_"),names(spline_prots_kid))
 ```
 
 ```{r}
-linear_prots_kid <- fit_limma_tocomp(.x = 1,
-     type = "linear", wide_imp = wide_imp_kid, wide_dat = wide_dat_kid, pval_cutoff = 0.05)
+linear_prots_kid <- fit_limma_tocomp(.x = 2,
+                                     type = "linear", 
+                                     wide_imp = wide_imp_kid, 
+                                     wide_dat = wide_dat_kid,
+                                     pval_cutoff = 0.05)
 
 linear_prots_kid <- list(Linear = linear_prots_kid)
 
@@ -365,7 +371,8 @@ print(comb_mat_kid)
 These proteins are those that can be considered to have a linear relationship with time, even if they were also detected by the spline DF 2 model.
 
 ```{r}
-only_linear_kid <- c(extract_comb(comb_mat_kid, "001"),extract_comb(comb_mat_kid, "101"))
+only_linear_kid <- c(extract_comb(comb_mat_kid, "001"),
+                     extract_comb(comb_mat_kid, "101"))
 ```
 
 ```{r}
@@ -692,17 +699,17 @@ ggsave(plot = cowplot::plot_grid(up_lun,down_lun, ncol = 2),
 
 ```{r}
 top_table_liver <- bind_rows(fit_time_cont_liv$toptable %>% mutate(organ = "liver")) %>%
-          filter(ID %in% only_linear_liv) %>%
+          filter(adj.P.Val <= 0.05) %>%
           mutate(time_relationship = case_when(logFC < 0 ~ "decreased",
                                                logFC > 0 ~ "pseudo-enriched"))
 
 top_table_kidney <- bind_rows(fit_time_cont_kid$toptable %>% mutate(organ = "kidney")) %>%
-          filter(ID %in% only_linear_kid) %>%
+          filter(adj.P.Val <= 0.05) %>%
           mutate(time_relationship = case_when(logFC < 0 ~ "decreased",
                                                logFC > 0 ~ "pseudo-enriched"))
 
 top_table_lung <- bind_rows(fit_time_cont_lun$toptable %>% mutate(organ = "lung")) %>%
-          filter(ID %in% only_linear_lun) %>%
+          filter(adj.P.Val <= 0.05) %>%
           mutate(time_relationship = case_when(logFC < 0 ~ "decreased",
                                                logFC > 0 ~ "pseudo-enriched"))
 
