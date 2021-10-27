@@ -222,80 +222,6 @@ vis_profs <- function(data,
           return(profile_plot1)
 }
 
-vis_profs_2 <- function(data, 
-                      toptable, 
-                      pval_cutoff, 
-                      title1 = NULL, 
-                      subtitle1 = NULL, 
-                      top_nr = 18, 
-                      fited_values, 
-                      method = NULL,
-                      interesting,
-                      leg_pos = "none"){
-          
-          
-          ori_long <- data %>% 
-                    pivot_longer(cols = 2:ncol(.),
-                                 names_sep = "\\_",
-                                 names_to = c("Time","Rep"),
-                                 values_to = "Abundance") %>% 
-                    mutate(Run = paste0(Time,"_",Rep),
-                           protein = ID)
-          
-          
-          filt_top <- toptable %>% 
-                    dplyr::filter(ID %in% interesting) %>%
-                    filter(adj.P.Val <= pval_cutoff) %>%
-                    slice_min(order_by = adj.P.Val,
-                              n = top_nr)
-          
-          proteins <- pull(filt_top, ID)
-          
-          fitednreal <- left_join(ori_long, fited_values) %>% 
-                    suppressMessages() %>%
-                    suppressWarnings()
-          
-          toprofplot <- fitednreal %>%
-                    dplyr::filter(ID %in% proteins)
-          
-          bitrout <- clusterProfiler::bitr(toprofplot$ID,
-                                           fromType = "UNIPROT",
-                                           toType = "SYMBOL", 
-                                           OrgDb = org.Hs.eg.db) %>% 
-                    dplyr::rename(ID = UNIPROT) %>% 
-                    suppressMessages() %>%
-                    suppressWarnings()
-          
-          toprofplot <- left_join(toprofplot, bitrout, by = "ID") %>% 
-                    suppressMessages() %>%
-                    suppressWarnings() %>% 
-                    mutate(SYMBOL = ifelse(is.na(SYMBOL),
-                                           yes = ID,
-                                           no = SYMBOL))
-          
-          
-          profile_plot1 <- ggplot(data = toprofplot, 
-                                  aes(x = Time, y = Abundance, group=ID)) +
-                    geom_line(stat = "summary") +
-                    geom_point(size = 1) +
-                    #scale_color_grey()+
-                    geom_smooth(data = toprofplot,
-                                mapping = aes(x = Time, y = Fitted_Abundance),
-                                method = method, color = "blue", size = 0.75) +
-                    facet_wrap(~SYMBOL, ncol = 3) +
-                    ggtitle(label = title1,
-                            subtitle = subtitle1) + 
-                    theme(axis.text.x = element_text(hjust = 0.7, vjust = 1, size=8, angle = 45),
-                          panel.background = element_blank(),
-                          panel.grid.major = element_line(color = "grey"),
-                          panel.border = element_rect(colour = "black", fill=NA, size=1),
-                          legend.position = leg_pos,
-                          axis.title=element_text(size=10,face="bold"),
-                          strip.background = element_blank(),
-                          strip.text.x = element_text(margin = margin(1,1,1,1, "mm")))
-          
-          return(profile_plot1)
-}
 
 vis_profs_2 <- function(data, 
                         toptable, 
@@ -306,6 +232,7 @@ vis_profs_2 <- function(data,
                         fited_values, 
                         method = NULL,
                         interesting,
+                        exclude = NULL,
                         leg_pos = "none"){
           
           
@@ -320,8 +247,9 @@ vis_profs_2 <- function(data,
           
           filt_top <- toptable %>% 
                     dplyr::filter(ID %in% interesting) %>%
+                    dplyr::filter(!ID %in% exclude) %>%
                     filter(adj.P.Val <= pval_cutoff) %>%
-                    slice_min(order_by = adj.P.Val,
+                    slice_min(order_by = P.Value,
                               n = top_nr)
           
           proteins <- pull(filt_top, ID)
