@@ -1,0 +1,1236 @@
+Necrodegradomics - Prep figures for manuscript
+================
+Miguel Cosenza
+27 October, 2021
+
+# Fitting linear models with `limma`
+
+Three (3) types of models will be applied to pinpoint proteins with
+three different behaviors across time.
+
+-   Model 1: Time as a continuous variable: will identify proteins that
+    either have linear ‘increased’ or ‘decreased’ behavior over time.
+-   Model 2: Polynomial spline fitting with 2 degrees of freedom: will
+    catch proteins that have a maximal or minimum peak at one time
+    point.
+-   Model 3: Polynomial spline fitting with 3 degrees of freedom: will
+    catch proteins that have a ‘sigmoidal’ behavior across time.
+
+## Load expression matrices
+
+### Liver
+
+``` r
+wide_imp_liv <- read_delim(here::here("results/msstats_log2_norm_expr_mat_ncro_liver_imputed.txt"),
+                       delim = "\t")
+
+wide_dat_liv <- read_delim(here::here("results/msstats_log2_proda_norm_expr_mat_ncro_liver.txt"),
+                       delim = "\t")
+```
+
+#### Model 1: Time as a continuous variable
+
+``` r
+fit_time_cont_liv <- fit_limma_poly(type = "linear", 
+                                .x = 2,
+                                wide_imp = wide_imp_liv, 
+                                wide_dat = wide_dat_liv,
+                                pval_cutoff = 0.05)
+```
+
+##### Histogram of distribution of adjusted p-values.
+
+``` r
+histogram_toptable(fit_time_cont_liv$toptable,
+                   type = "Linear",
+                   .x = NULL)
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-3-1.png)<!-- -->
+
+#### Model 2: Polynomial spline fitting with 2 degrees of freedom
+
+``` r
+fit_spline_df2_liv <- fit_limma_poly(type = "spline", 
+                                .x = 2,
+                                wide_imp = wide_imp_liv, 
+                                wide_dat = wide_dat_liv,
+                                pval_cutoff = 0.05)
+```
+
+##### Histogram of distribution of adjusted p-values.
+
+``` r
+histogram_toptable(fit_spline_df2_liv$toptable,
+                   type = "Spline",
+                   .x = 2)
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-5-1.png)<!-- -->
+
+#### Model 3: Polynomial spline fitting with 3 degrees of freedom
+
+``` r
+fit_spline_df3_liv <- fit_limma_poly(type = "spline", 
+                                .x = 3,
+                                wide_imp = wide_imp_liv, 
+                                wide_dat = wide_dat_liv,  
+                                pval_cutoff = 0.05)
+```
+
+#### Intersection analyses
+
+The intersection analysis would allow to identify proteins that are
+exclusively identified by one of the models/approaches.
+
+##### Prep list of proteins identified by each model/approach for the intersection analysis.
+
+``` r
+pot_degress <- c(2, 3)
+names(pot_degress) <- paste0(rep("Degr"), pot_degress)
+
+spline_prots_liv <- map(.x = pot_degress, 
+    .f = fit_limma_tocomp,
+     type = "spline", wide_imp = wide_imp_liv, wide_dat = wide_dat_liv, pval_cutoff = 0.05)
+
+names(spline_prots_liv) <- paste0(rep("Spline_"),names(spline_prots_liv))
+```
+
+``` r
+linear_prots_liv <- fit_limma_tocomp(.x = 2,
+                                     type = "linear", 
+                                     wide_imp = wide_imp_liv, 
+                                     wide_dat = wide_dat_liv, 
+                                     pval_cutoff = 0.05)
+
+linear_prots_liv <- list(Linear = linear_prots_liv)
+
+large_list_1_liv <- c(spline_prots_liv,
+                      linear_prots_liv)
+```
+
+##### Upset plot for the intersection of proteins identified as associated with the regression models and an adjusted `p-value < 0.05`.
+
+``` r
+UpSetR::upset(UpSetR::fromList(large_list_1_liv), nsets = 11, order.by = "freq")
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-9-1.png)<!-- -->
+
+##### Upset plots with `complexHeatmap` package are better for further processing the intersecting elements
+
+``` r
+comb_mat_liv <- make_comb_mat(large_list_1_liv, min_set_size = 1)
+```
+
+##### Combination matrix
+
+``` r
+print(comb_mat_liv)
+```
+
+    ## A combination matrix with 3 sets and 6 combinations.
+    ##   ranges of combination set size: c(2, 129).
+    ##   mode for the combination size: distinct.
+    ##   sets are on rows.
+    ## 
+    ## Combination sets are:
+    ##   Spline_Degr2 Spline_Degr3 Linear code size
+    ##              x            x      x  111   38
+    ##              x            x         110    2
+    ##              x                   x  101   68
+    ##              x                      100   19
+    ##                           x         010    4
+    ##                                  x  001  129
+    ## 
+    ## Sets are:
+    ##            set size
+    ##   Spline_Degr2  127
+    ##   Spline_Degr3   44
+    ##         Linear  235
+
+#### Proteins that were detected by simple linear model and spline DF 2
+
+These proteins are those that can be considered to have a linear
+relationship with time, even if they were also detected by the spline DF
+2 model.
+
+``` r
+only_linear_liv <- c(extract_comb(comb_mat_liv, "001"),extract_comb(comb_mat_liv, "101"))
+```
+
+``` r
+length(only_linear_liv)
+```
+
+    ## [1] 197
+
+### Proteins with positive relation with Time
+
+``` r
+pos_linear_liv <- fit_time_cont_liv$toptable %>% 
+  filter(ID %in% only_linear_liv,
+         logFC > 0)
+
+poslin_bitr_liv <- clusterProfiler::bitr(pos_linear_liv$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+pos_linear_liv <- left_join(pos_linear_liv, poslin_bitr_liv, by = "ID")
+```
+
+``` r
+vis_profs_2(data = wide_dat_liv, 
+          toptable = pos_linear_liv, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_liv$fitted_values, 
+          method = "lm",
+          interesting = pos_linear_liv$ID,
+          leg_pos = "none")
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-15-1.png)<!-- -->
+
+### Proteins with negative relation with Time
+
+``` r
+neg_linear_liv <- fit_time_cont_liv$toptable %>% 
+  filter(ID %in% only_linear_liv,
+         logFC < 0)
+
+poslin_bitr_liv <- clusterProfiler::bitr(neg_linear_liv$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+neg_linear_liv <- left_join(neg_linear_liv, poslin_bitr_liv, by = "ID")
+```
+
+``` r
+vis_profs_2(data = wide_dat_liv, 
+          toptable = neg_linear_liv, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_liv$fitted_values, 
+          method = "lm",
+          interesting = neg_linear_liv$ID,
+          leg_pos = "none") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 1, size=8, angle = 45),
+                          panel.background = element_blank(),
+                          panel.grid.major = element_line(color = "grey"),
+                          panel.border = element_rect(colour = "black", fill=NA, size=1),
+                          legend.position = "none",
+                          axis.title.y = element_blank())
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-17-1.png)<!-- -->
+
+``` r
+up_liv <- vis_profs_2(data = wide_dat_liv, 
+          toptable = pos_linear_liv, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_liv$fitted_values, 
+          method = "lm",
+          interesting = pos_linear_liv$ID,
+          leg_pos = "none")
+down_liv <- vis_profs_2(data = wide_dat_liv, 
+          toptable = neg_linear_liv, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_liv$fitted_values, 
+          method = "lm",
+          interesting = neg_linear_liv$ID,
+          leg_pos = "none") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 1, size=8, angle = 45),
+                          panel.background = element_blank(),
+                          panel.grid.major = element_line(color = "grey"),
+                          panel.border = element_rect(colour = "black", fill=NA, size=1),
+                          legend.position = "none",
+                          axis.title.y = element_blank())
+```
+
+``` r
+cowplot::plot_grid(up_liv,down_liv, ncol = 2)
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-19-1.png)<!-- -->
+
+``` r
+ggsave(plot = cowplot::plot_grid(up_liv,down_liv, ncol = 2), 
+       filename = here::here("figures/top_proteins_liver.tiff"), 
+       device = "tiff",
+       units = "mm",
+       width = 190,
+       height = 80)
+```
+
+### Kidney
+
+``` r
+wide_imp_kid <- read_delim(here::here("results/msstats_log2_norm_expr_mat_ncro_kidney_imputed.txt"),
+                       delim = "\t")
+
+wide_dat_kid <- read_delim(here::here("results/msstats_log2_proda_norm_expr_mat_ncro_kidney.txt"),
+                       delim = "\t")
+```
+
+#### Model 1: Time as a continuous variable
+
+``` r
+fit_time_cont_kid <- fit_limma_poly(type = "linear", 
+                                .x = 2,
+                                wide_imp = wide_imp_kid, 
+                                wide_dat = wide_dat_kid,
+                                pval_cutoff = 0.05)
+```
+
+##### Histogram of distribution of adjusted p-values.
+
+``` r
+histogram_toptable(fit_time_cont_kid$toptable,
+                   type = "Linear",
+                   .x = NULL)
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-23-1.png)<!-- -->
+
+#### Model 2: Polynomial spline fitting with 2 degrees of freedom
+
+``` r
+fit_spline_df2_kid <- fit_limma_poly(type = "spline", 
+                                .x = 2,
+                                wide_imp = wide_imp_kid, 
+                                wide_dat = wide_dat_kid,
+                                pval_cutoff = 0.05)
+```
+
+##### Histogram of distribution of adjusted p-values.
+
+``` r
+histogram_toptable(fit_spline_df2_kid$toptable,
+                   type = "Spline",
+                   .x = 2)
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-25-1.png)<!-- -->
+
+#### Model 3: Polynomial spline fitting with 3 degrees of freedom
+
+``` r
+fit_spline_df3_kid <- fit_limma_poly(type = "spline", 
+                                .x = 3,
+                                wide_imp = wide_imp_kid, 
+                                wide_dat = wide_dat_kid,  
+                                pval_cutoff = 0.05)
+```
+
+#### Intersection analyses
+
+The intersection analysis would allow to identify proteins that are
+exclusively identified by one of the models/approaches.
+
+##### Prep list of proteins identified by each model/approach for the intersection analysis.
+
+``` r
+pot_degress <- c(2, 3)
+names(pot_degress) <- paste0(rep("Degr"), pot_degress)
+
+spline_prots_kid <- map(.x = pot_degress, 
+    .f = fit_limma_tocomp,
+     type = "spline", wide_imp = wide_imp_kid, wide_dat = wide_dat_kid, pval_cutoff = 0.05)
+
+names(spline_prots_kid) <- paste0(rep("Spline_"),names(spline_prots_kid))
+```
+
+``` r
+linear_prots_kid <- fit_limma_tocomp(.x = 2,
+                                     type = "linear", 
+                                     wide_imp = wide_imp_kid, 
+                                     wide_dat = wide_dat_kid,
+                                     pval_cutoff = 0.05)
+
+linear_prots_kid <- list(Linear = linear_prots_kid)
+
+large_list_1_kid <- c(spline_prots_kid,
+                      linear_prots_kid)
+```
+
+##### Upset plot for the intersection of proteins identified as associated with the regression models and an adjusted `p-value < 0.05`.
+
+``` r
+UpSetR::upset(UpSetR::fromList(large_list_1_kid), nsets = 11, order.by = "freq")
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-29-1.png)<!-- -->
+
+##### Upset plots with `complexHeatmap` package are better for further processing the intersecting elements
+
+``` r
+comb_mat_kid <- make_comb_mat(large_list_1_kid, min_set_size = 1)
+```
+
+##### Combination matrix
+
+``` r
+print(comb_mat_kid)
+```
+
+    ## A combination matrix with 3 sets and 7 combinations.
+    ##   ranges of combination set size: c(6, 214).
+    ##   mode for the combination size: distinct.
+    ##   sets are on rows.
+    ## 
+    ## Combination sets are:
+    ##   Spline_Degr2 Spline_Degr3 Linear code size
+    ##              x            x      x  111  214
+    ##              x            x         110   33
+    ##              x                   x  101   86
+    ##                           x      x  011    6
+    ##              x                      100   37
+    ##                           x         010   22
+    ##                                  x  001   96
+    ## 
+    ## Sets are:
+    ##            set size
+    ##   Spline_Degr2  370
+    ##   Spline_Degr3  275
+    ##         Linear  402
+
+#### Proteins that were detected by simple linear model and spline DF 2
+
+These proteins are those that can be considered to have a linear
+relationship with time, even if they were also detected by the spline DF
+2 model.
+
+``` r
+only_linear_kid <- c(extract_comb(comb_mat_kid, "001"),
+                     extract_comb(comb_mat_kid, "101"))
+```
+
+``` r
+length(only_linear_kid)
+```
+
+    ## [1] 182
+
+### Proteins with positive relation with Time
+
+``` r
+pos_linear_kid <- fit_time_cont_kid$toptable %>% 
+  filter(ID %in% only_linear_kid,
+         logFC > 0)
+
+poslin_bitr_kid <- clusterProfiler::bitr(pos_linear_kid$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+pos_linear_kid <- left_join(pos_linear_kid, poslin_bitr_kid, by = "ID")
+```
+
+``` r
+vis_profs_2(data = wide_dat_kid, 
+          toptable = pos_linear_kid, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_kid$fitted_values, 
+          method = "lm",
+          interesting = pos_linear_kid$ID,
+          leg_pos = "none")
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-35-1.png)<!-- -->
+
+### Proteins with negative relation with Time
+
+``` r
+neg_linear_kid <- fit_time_cont_kid$toptable %>% 
+  filter(ID %in% only_linear_kid,
+         logFC < 0)
+
+poslin_bitr_kid <- clusterProfiler::bitr(neg_linear_kid$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+neg_linear_kid <- left_join(neg_linear_kid, poslin_bitr_kid, by = "ID")
+```
+
+``` r
+vis_profs_2(data = wide_dat_kid, 
+          toptable = neg_linear_kid, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_kid$fitted_values, 
+          method = "lm",
+          interesting = neg_linear_kid$ID,
+          leg_pos = "none") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 1, size=8, angle = 45),
+                          panel.background = element_blank(),
+                          panel.grid.major = element_line(color = "grey"),
+                          panel.border = element_rect(colour = "black", fill=NA, size=1),
+                          legend.position = "none",
+                          axis.title.y = element_blank())
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-37-1.png)<!-- -->
+
+``` r
+up_kid <- vis_profs_2(data = wide_dat_kid, 
+          toptable = pos_linear_kid, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_kid$fitted_values, 
+          method = "lm",
+          interesting = pos_linear_kid$ID,
+          leg_pos = "none")
+down_kid <- vis_profs_2(data = wide_dat_kid, 
+          toptable = neg_linear_kid, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_kid$fitted_values, 
+          method = "lm",
+          interesting = neg_linear_kid$ID,
+          leg_pos = "none") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 1, size=8, angle = 45),
+                          panel.background = element_blank(),
+                          panel.grid.major = element_line(color = "grey"),
+                          panel.border = element_rect(colour = "black", fill=NA, size=1),
+                          legend.position = "none",
+                          axis.title.y = element_blank())
+```
+
+``` r
+cowplot::plot_grid(up_kid,down_kid, ncol = 2)
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-39-1.png)<!-- -->
+
+``` r
+ggsave(plot = cowplot::plot_grid(up_kid,down_kid, ncol = 2), 
+       filename = here::here("figures/top_proteins_kidney.tiff"), 
+       device = "tiff",
+       units = "mm",
+       width = 190,
+       height = 80)
+```
+
+### Lung
+
+``` r
+wide_imp_lun <- read_delim(here::here("results/msstats_log2_norm_expr_mat_ncro_lung_imputed.txt"),
+                       delim = "\t")
+
+wide_dat_lun <- read_delim(here::here("results/msstats_log2_proda_norm_expr_mat_ncro_lung.txt"),
+                       delim = "\t")
+```
+
+#### Model 1: Time as a continuous variable
+
+``` r
+fit_time_cont_lun <- fit_limma_poly(type = "linear", 
+                                .x = 2,
+                                wide_imp = wide_imp_lun, 
+                                wide_dat = wide_dat_lun,
+                                pval_cutoff = 0.05)
+```
+
+##### Histogram of distribution of adjusted p-values.
+
+``` r
+histogram_toptable(fit_time_cont_lun$toptable,
+                   type = "Linear",
+                   .x = NULL)
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-43-1.png)<!-- -->
+
+#### Model 2: Polynomial spline fitting with 2 degrees of freedom
+
+``` r
+fit_spline_df2_lun <- fit_limma_poly(type = "spline", 
+                                .x = 2,
+                                wide_imp = wide_imp_lun, 
+                                wide_dat = wide_dat_lun,
+                                pval_cutoff = 0.05)
+```
+
+##### Histogram of distribution of adjusted p-values.
+
+``` r
+histogram_toptable(fit_spline_df2_lun$toptable,
+                   type = "Spline",
+                   .x = 2)
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-45-1.png)<!-- -->
+
+#### Model 3: Polynomial spline fitting with 3 degrees of freedom
+
+``` r
+fit_spline_df3_lun <- fit_limma_poly(type = "spline", 
+                                .x = 3,
+                                wide_imp = wide_imp_lun, 
+                                wide_dat = wide_dat_lun,  
+                                pval_cutoff = 0.05)
+```
+
+#### Intersection analyses
+
+The intersection analysis would allow to identify proteins that are
+exclusively identified by one of the models/approaches.
+
+##### Prep list of proteins identified by each model/approach for the intersection analysis.
+
+``` r
+pot_degress <- c(2, 3)
+names(pot_degress) <- paste0(rep("Degr"), pot_degress)
+
+spline_prots_lun <- map(.x = pot_degress, 
+    .f = fit_limma_tocomp,
+     type = "spline", 
+    wide_imp = wide_imp_lun, 
+    wide_dat = wide_dat_lun, 
+    pval_cutoff = 0.05)
+
+names(spline_prots_lun) <- paste0(rep("Spline_"),names(spline_prots_lun))
+```
+
+``` r
+linear_prots_lun <- fit_limma_tocomp(.x = 1,
+     type = "linear", wide_imp = wide_imp_lun, wide_dat = wide_dat_lun, pval_cutoff = 0.05)
+
+linear_prots_lun <- list(Linear = linear_prots_lun)
+
+large_list_1_lun <- c(spline_prots_lun,
+                      linear_prots_lun)
+```
+
+##### Upset plot for the intersection of proteins identified as associated with the regression models and an adjusted `p-value < 0.05`.
+
+``` r
+UpSetR::upset(UpSetR::fromList(large_list_1_lun), nsets = 11, order.by = "freq")
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-49-1.png)<!-- -->
+
+##### Upset plots with `complexHeatmap` package are better for further processing the intersecting elements
+
+``` r
+comb_mat_lun <- make_comb_mat(large_list_1_lun, min_set_size = 1)
+```
+
+##### Combination matrix
+
+``` r
+print(comb_mat_lun)
+```
+
+    ## A combination matrix with 3 sets and 5 combinations.
+    ##   ranges of combination set size: c(3, 8).
+    ##   mode for the combination size: distinct.
+    ##   sets are on rows.
+    ## 
+    ## Combination sets are:
+    ##   Spline_Degr2 Spline_Degr3 Linear code size
+    ##              x            x      x  111    7
+    ##              x            x         110    7
+    ##              x                   x  101    3
+    ##              x                      100    4
+    ##                           x         010    8
+    ## 
+    ## Sets are:
+    ##            set size
+    ##   Spline_Degr2   21
+    ##   Spline_Degr3   22
+    ##         Linear   10
+
+#### Proteins that were detected by simple linear model and spline DF 2
+
+These proteins are those that can be considered to have a linear
+relationship with time, even if they were also detected by the spline DF
+2 model.
+
+``` r
+only_linear_lun <- c(extract_comb(comb_mat_lun, "101"),
+                     #extract_comb(comb_mat_lun, "100"),
+                 extract_comb(comb_mat_lun, "111"))
+```
+
+``` r
+length(only_linear_lun)
+```
+
+    ## [1] 10
+
+### Proteins with positive relation with Time
+
+``` r
+pos_linear_lun <- fit_time_cont_lun$toptable %>% 
+  filter(ID %in% only_linear_lun,
+         logFC > 0)
+
+poslin_bitr_lun <- clusterProfiler::bitr(pos_linear_lun$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+pos_linear_lun <- left_join(pos_linear_lun, poslin_bitr_lun, by = "ID")
+```
+
+``` r
+vis_profs_2(data = wide_dat_lun, 
+          toptable = pos_linear_lun, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_lun$fitted_values, 
+          method = "lm",
+          interesting = pos_linear_lun$ID,
+          leg_pos = "none")
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-55-1.png)<!-- -->
+
+### Proteins with negative relation with Time
+
+``` r
+neg_linear_lun <- fit_time_cont_lun$toptable %>% 
+  filter(ID %in% only_linear_lun,
+         logFC < 0)
+
+poslin_bitr_lun <- clusterProfiler::bitr(neg_linear_lun$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+neg_linear_lun <- left_join(neg_linear_lun, poslin_bitr_lun, by = "ID")
+```
+
+``` r
+vis_profs_2(data = wide_dat_lun, 
+          toptable = neg_linear_lun, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_lun$fitted_values, 
+          method = "lm",
+          interesting = neg_linear_lun$ID,
+          leg_pos = "none") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 1, size=8, angle = 45),
+                          panel.background = element_blank(),
+                          panel.grid.major = element_line(color = "grey"),
+                          panel.border = element_rect(colour = "black", fill=NA, size=1),
+                          legend.position = "none",
+                          axis.title.y = element_blank())
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-57-1.png)<!-- -->
+
+``` r
+up_lun <- vis_profs_2(data = wide_dat_lun, 
+          toptable = pos_linear_lun, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_lun$fitted_values, 
+          method = "lm",
+          interesting = pos_linear_lun$ID,
+          leg_pos = "none")
+down_lun <- vis_profs_2(data = wide_dat_lun, 
+          toptable = neg_linear_lun, 
+          pval_cutoff = 0.05, 
+          top_nr = 9, 
+          fited_values = fit_time_cont_lun$fitted_values, 
+          method = "lm",
+          interesting = neg_linear_lun$ID,
+          leg_pos = "none") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 1, size=8, angle = 45),
+                          panel.background = element_blank(),
+                          panel.grid.major = element_line(color = "grey"),
+                          panel.border = element_rect(colour = "black", fill=NA, size=1),
+                          legend.position = "none",
+                          axis.title.y = element_blank())
+```
+
+``` r
+cowplot::plot_grid(up_lun,down_lun, ncol = 2, rel_heights = c(10,0.5))
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-59-1.png)<!-- -->
+
+``` r
+ggsave(plot = cowplot::plot_grid(up_lun,down_lun, ncol = 2), 
+       filename = here::here("figures/top_proteins_lung.tiff"), 
+       device = "tiff",
+       units = "mm",
+       width = 190,
+       height = 80)
+```
+
+## Tabular results from limma
+
+``` r
+top_table_liver <- bind_rows(fit_time_cont_liv$toptable %>% mutate(organ = "liver")) %>%
+          filter(adj.P.Val <= 0.05) %>%
+          mutate(time_relationship = case_when(logFC < 0 ~ "decreased",
+                                               logFC > 0 ~ "pseudo-enriched"))
+
+top_table_kidney <- bind_rows(fit_time_cont_kid$toptable %>% mutate(organ = "kidney")) %>%
+          filter(adj.P.Val <= 0.05) %>%
+          mutate(time_relationship = case_when(logFC < 0 ~ "decreased",
+                                               logFC > 0 ~ "pseudo-enriched"))
+
+top_table_lung <- bind_rows(fit_time_cont_lun$toptable %>% mutate(organ = "lung")) %>%
+          filter(adj.P.Val <= 0.05) %>%
+          mutate(time_relationship = case_when(logFC < 0 ~ "decreased",
+                                               logFC > 0 ~ "pseudo-enriched"))
+
+# general table
+
+top_table_general <- bind_rows(top_table_kidney,
+                               top_table_liver,
+                               top_table_lung)
+
+# get gene symbols from uniprot IDs
+
+toptable_bitr <- clusterProfiler::bitr(top_table_general$ID,
+                                     fromType = "UNIPROT",
+                                     toType = "SYMBOL", 
+                                     OrgDb = org.Hs.eg.db) %>% 
+  dplyr::rename(ID = UNIPROT)
+
+# apend gene symbols to general top table
+
+top_table_final <- left_join(top_table_general, toptable_bitr) %>% 
+          dplyr::rename(UNIPROT_ID = ID)
+
+if(!file.exists(here::here("figures/limma_general_top_table_0.05_fdr.csv"))){
+          write_csv(x = top_table_final,
+                    file = here::here("figures/limma_general_top_table_0.05_fdr.csv"))
+}
+
+if(!file.exists(here::here("figures/limma_general_top_table_0.05_fdr.tsv"))){
+          write_tsv(x = top_table_final,
+                    file = here::here("figures/limma_general_top_table_0.05_fdr.tsv"))
+}
+
+if(!file.exists(here::here("figures/limma_general_top_table_0.05_fdrxls.csv"))){
+          write_excel_csv(x = top_table_final,
+                    file = here::here("figures/limma_general_top_table_0.05_fdrxls.csv"))
+}
+```
+
+# Exploratory Functional annotation
+
+In order to explore the functional annotation of the proteins detected
+under different models, a ‘relaxed’ enrichment analysis was performed.
+
+The adjusted p-value cut-off of the over-representation test was set to
+`0.1` and for the universe of background proteins all human proteins
+were kept.
+
+## Combine ID information from different organs
+
+``` r
+selected_proteins_liver <- bind_rows(pos_linear_liv,
+                                     neg_linear_liv, 
+                                     .id = "relation") %>% 
+          mutate(Organ = "Liver",
+                 Time_relation = if_else(relation == 1, 
+                                           true = "Pseudo-enriched",
+                                           false = "Decreased"))
+
+selected_proteins_kidney <- bind_rows(pos_linear_kid,
+                                      neg_linear_kid, 
+                                     .id = "relation") %>% 
+          mutate(Organ = "Kidney",
+                 Time_relation = if_else(relation == 1, 
+                                           true = "Pseudo-enriched",
+                                           false = "Decreased"))
+
+selected_proteins_lung <- bind_rows(pos_linear_lun,
+                                    neg_linear_lun, 
+                                     .id = "relation") %>% 
+          mutate(Organ = "Lung",
+                 Time_relation = if_else(relation == 1, 
+                                           true = "Pseudo-enriched",
+                                           false = "Decreased"))
+
+
+## selected proteins for enrichment analysis
+
+selected_proteins <- bind_rows(selected_proteins_liver,
+                               selected_proteins_kidney,
+                               selected_proteins_lung)
+```
+
+``` r
+library(clusterProfiler)
+library(ReactomePA)
+library(org.Hs.eg.db)
+```
+
+## <GO:MF>
+
+``` r
+group_comparison_functional <- compareCluster(ID~Time_relation+Organ, 
+                                              data=selected_proteins, 
+                                              fun="enrichGO",
+                                              OrgDb = org.Hs.eg.db,
+                                              keyType = "UNIPROT",
+                                              ont = "MF",
+                                              pvalueCutoff = 0.1,
+                                              pAdjustMethod = "BH", 
+                                              qvalueCutoff = 0.2,
+                                              minGSSize = 10,
+                                              maxGSSize = 500,
+                                              readable = FALSE,
+                                              pool = FALSE)
+
+group_comparison_functional_sim <- simplify(group_comparison_functional)
+
+
+#compareClusterResult_1 <- group_comparison_functional@compareClusterResult
+#
+#compareClusterResult_2 <- mutate(compareClusterResult_1,
+#                                 Description = case_when(str_count(Description, '\\w+') <= 5 ~ Description,
+#                                                         str_count(Description, '\\w+') > 5 ~ word(Description,1,5)),
+#                                 as)
+#
+#
+#group_comparison_functional@compareClusterResult$Description <- compareClusterResult_2$Description
+```
+
+``` r
+enrichplot::dotplot(group_comparison_functional_sim, x = "Time_relation") + 
+          facet_grid(~Organ) +
+          xlab("Time relationship") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 0.8, size=8, angle = 35),
+                axis.text.y = element_text(size=6),
+                panel.background = element_blank(),
+                panel.grid.major = element_line(color = "grey"),
+                panel.border = element_rect(colour = "black", fill=NA, size=1),
+                #legend.position = "none",
+                axis.title.y = element_blank(),
+                axis.title=element_text(size=10,face="bold"),
+                          strip.background = element_blank(),
+                          strip.text.x = element_text(size = 12, margin = margin(3,3,3,3, "mm")))
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-65-1.png)<!-- -->![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-65-2.png)<!-- -->
+
+``` r
+go_mf_dotplot <- enrichplot::dotplot(group_comparison_functional_sim, x = "Time_relation") + 
+          facet_grid(~Organ) +
+          xlab("Time relationship") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 0.8, size=8, angle = 35),
+                axis.text.y = element_text(size=6),
+                panel.background = element_blank(),
+                panel.grid.major = element_line(color = "grey"),
+                panel.border = element_rect(colour = "black", fill=NA, size=1),
+                #legend.position = "none",
+                axis.title.y = element_blank(),
+                axis.title=element_text(size=10,face="bold"),
+                          strip.background = element_blank(),
+                          strip.text.x = element_text(size = 12, margin = margin(3,3,3,3, "mm")))
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-66-1.png)<!-- -->
+
+``` r
+ggsave(plot = go_mf_dotplot, 
+       filename = here::here("figures/enrichment_dotplot_plot_MF.tiff"), 
+       device = "tiff",
+       units = "mm",
+       width = 190,
+       height = 115)
+```
+
+## <GO:CC>
+
+``` r
+group_comparison_functionalcc <- compareCluster(ID~Time_relation+Organ, 
+                                              data=selected_proteins, 
+                                              fun="enrichGO",
+                                              OrgDb = org.Hs.eg.db,
+                                              keyType = "UNIPROT",
+                                              ont = "CC",
+                                              pvalueCutoff = 0.1,
+                                              pAdjustMethod = "BH", 
+                                              qvalueCutoff = 0.2,
+                                              minGSSize = 10,
+                                              maxGSSize = 500,
+                                              readable = FALSE,
+                                              pool = FALSE)
+
+group_comparison_functionalcc_sim <- simplify(group_comparison_functionalcc)
+```
+
+``` r
+enrichplot::dotplot(group_comparison_functionalcc_sim, x = "Time_relation") + 
+          facet_grid(~Organ) +
+          xlab("Time relationship") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 0.8, size=8, angle = 35),
+                axis.text.y = element_text(size=6),
+                panel.background = element_blank(),
+                panel.grid.major = element_line(color = "grey"),
+                panel.border = element_rect(colour = "black", fill=NA, size=1),
+                #legend.position = "none",
+                axis.title.y = element_blank(),
+                axis.title=element_text(size=10,face="bold"),
+                          strip.background = element_blank(),
+                          strip.text.x = element_text(size = 12, margin = margin(3,3,3,3, "mm")))
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-69-1.png)<!-- -->![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-69-2.png)<!-- -->
+
+``` r
+go_cc_dotplot <- enrichplot::dotplot(group_comparison_functionalcc_sim, x = "Time_relation") + 
+          facet_grid(~Organ) +
+          xlab("Time relationship") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 0.8, size=8, angle = 35),
+                axis.text.y = element_text(size=6),
+                panel.background = element_blank(),
+                panel.grid.major = element_line(color = "grey"),
+                panel.border = element_rect(colour = "black", fill=NA, size=1),
+                #legend.position = "none",
+                axis.title.y = element_blank(),
+                axis.title=element_text(size=10,face="bold"),
+                          strip.background = element_blank(),
+                          strip.text.x = element_text(size = 12, margin = margin(3,3,3,3, "mm")))
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-70-1.png)<!-- -->
+
+``` r
+ggsave(plot = go_cc_dotplot, 
+       filename = here::here("figures/enrichment_dotplot_plot_CC.tiff"), 
+       device = "tiff",
+       units = "mm",
+       width = 190,
+       height = 115)
+```
+
+## <GO:BP>
+
+``` r
+group_comparison_functionalbp <- compareCluster(ID~Time_relation+Organ, 
+                                              data=selected_proteins, 
+                                              fun="enrichGO",
+                                              OrgDb = org.Hs.eg.db,
+                                              keyType = "UNIPROT",
+                                              ont = "BP",
+                                              pvalueCutoff = 0.1,
+                                              pAdjustMethod = "BH", 
+                                              qvalueCutoff = 0.2,
+                                              minGSSize = 10,
+                                              maxGSSize = 500,
+                                              readable = FALSE,
+                                              pool = FALSE)
+
+group_comparison_functionalbp_sim <- simplify(group_comparison_functionalbp)
+```
+
+``` r
+enrichplot::dotplot(group_comparison_functionalbp_sim, x = "Time_relation") + 
+          facet_grid(~Organ) +
+          xlab("Time relationship") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 0.8, size=8, angle = 35),
+                axis.text.y = element_text(size=6),
+                panel.background = element_blank(),
+                panel.grid.major = element_line(color = "grey"),
+                panel.border = element_rect(colour = "black", fill=NA, size=1),
+                #legend.position = "none",
+                axis.title.y = element_blank(),
+                axis.title=element_text(size=10,face="bold"),
+                          strip.background = element_blank(),
+                          strip.text.x = element_text(size = 12, margin = margin(3,3,3,3, "mm")))
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-73-1.png)<!-- -->![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-73-2.png)<!-- -->
+
+``` r
+go_bp_dotplot <- enrichplot::dotplot(group_comparison_functionalbp_sim, x = "Time_relation") + 
+          facet_grid(~Organ) +
+          xlab("Time relationship") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 0.8, size=8, angle = 35),
+                axis.text.y = element_text(size=6),
+                panel.background = element_blank(),
+                panel.grid.major = element_line(color = "grey"),
+                panel.border = element_rect(colour = "black", fill=NA, size=1),
+                #legend.position = "none",
+                axis.title.y = element_blank(),
+                axis.title=element_text(size=10,face="bold"),
+                          strip.background = element_blank(),
+                          strip.text.x = element_text(size = 12, margin = margin(3,3,3,3, "mm")))
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-74-1.png)<!-- -->
+
+``` r
+ggsave(plot = go_bp_dotplot, 
+       filename = here::here("figures/enrichment_dotplot_plot_BP.tiff"), 
+       device = "tiff",
+       units = "mm",
+       width = 190,
+       height = 105)
+```
+
+## Reactome
+
+``` r
+up2entrez <- bitr(geneID = selected_proteins$ID,
+              fromType = "UNIPROT",
+              toType = "ENTREZID",
+              OrgDb = org.Hs.eg.db,
+              drop = FALSE) %>%
+          dplyr::rename(ID = UNIPROT)
+
+selected_proteins <- left_join(selected_proteins, up2entrez)
+```
+
+``` r
+group_comparison_functional_react <- compareCluster(ENTREZID~Time_relation+Organ, 
+                                              data=selected_proteins, 
+                                              fun = "enrichPathway",
+                                             organism = "human",
+                                             pvalueCutoff = 0.1,
+                                             pAdjustMethod = "BH", 
+                                             qvalueCutoff = 0.2,
+                                             minGSSize = 10,
+                                             maxGSSize = 500,
+                                             readable = FALSE)
+
+compareClusterResult_1 <- group_comparison_functional_react@compareClusterResult
+
+compareClusterResult_2 <- mutate(compareClusterResult_1,
+                                 Description = case_when(str_count(Description, '\\w+') <= 5 ~ Description,
+                                                         str_count(Description, '\\w+') > 5 ~ word(Description,1,5)))
+
+
+group_comparison_functional_react@compareClusterResult$Description <- compareClusterResult_2$Description
+```
+
+``` r
+enrichplot::dotplot(group_comparison_functional_react, x = "Time_relation") + 
+          facet_grid(~Organ) +
+          #geom_point(size = 0.5) +
+          xlab("Time relationship") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 0.8, size=10, angle = 35),
+                axis.text.y = element_text(size=8),
+                panel.background = element_blank(),
+                panel.grid.major = element_line(color = "grey"),
+                panel.border = element_rect(colour = "black", fill=NA, size=1),
+                #legend.position = "none",
+                axis.title.y = element_blank(),
+                axis.title=element_text(size=10,face="bold"),
+                          strip.background = element_blank(),
+                          strip.text.x = element_text(size = 12, margin = margin(3,3,3,3, "mm")))
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-78-1.png)<!-- -->![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-78-2.png)<!-- -->
+
+``` r
+reactome_dotplot <- enrichplot::dotplot(group_comparison_functional_react, x = "Time_relation") + 
+          facet_grid(~Organ) +
+          xlab("Time relationship") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 0.8, size=8, angle = 35),
+                axis.text.y = element_text(size=6),
+                panel.background = element_blank(),
+                panel.grid.major = element_line(color = "grey"),
+                panel.border = element_rect(colour = "black", fill=NA, size=1),
+                #legend.position = "none",
+                axis.title.y = element_blank(),
+                axis.title=element_text(size=10,face="bold"),
+                          strip.background = element_blank(),
+                          strip.text.x = element_text(size = 12, margin = margin(3,3,3,3, "mm")))
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-79-1.png)<!-- -->
+
+``` r
+ggsave(plot = reactome_dotplot, 
+       filename = here::here("figures/enrichment_dotplot_plot_reactome.tiff"), 
+       device = "tiff",
+       units = "mm",
+       width = 190,
+       height = 105)
+```
+
+# Functional annotation (stringent)
+
+In order to explore the functional annotation of the proteins detected
+under different models, a ‘relaxed’ enrichment analysis was performed.
+
+The adjusted p-value cut-off of the over-representation test was set to
+`0.1` and for the universe of background proteins all human proteins
+were kept.
+
+## Get universe proteins
+
+All identified and quantified proteins in all samples will be used as
+background/universe.
+
+``` r
+universe_ids <- c(wide_dat_kid$ID,
+                  wide_dat_liv$ID,
+                  wide_dat_lun$ID) %>%
+          unique()
+```
+
+## <GO:MF>
+
+``` r
+group_comparison_functional_str_mf <- compareCluster(ID~Time_relation+Organ, 
+                                              data=selected_proteins, 
+                                              fun="enrichGO",
+                                              OrgDb = org.Hs.eg.db,
+                                              keyType = "UNIPROT",
+                                              ont = "MF",
+                                              pvalueCutoff = 0.05,
+                                              pAdjustMethod = "BH", 
+                                              qvalueCutoff = 0.2,
+                                              minGSSize = 10,
+                                              maxGSSize = 500,
+                                              readable = FALSE,
+                                              pool = FALSE,
+                                              universe = universe_ids)
+
+group_comparison_functional_str_mfsim <- simplify(group_comparison_functional_str_mf)
+
+
+#compareClusterResult_1 <- group_comparison_functional@compareClusterResult
+#
+#compareClusterResult_2 <- mutate(compareClusterResult_1,
+#                                 Description = case_when(str_count(Description, '\\w+') <= 5 ~ Description,
+#                                                         str_count(Description, '\\w+') > 5 ~ word(Description,1,5)),
+#                                 as)
+#
+#
+#group_comparison_functional@compareClusterResult$Description <- compareClusterResult_2$Description
+```
+
+``` r
+enrichplot::dotplot(group_comparison_functional_str_mfsim, x = "Time_relation") + 
+          facet_grid(~Organ) +
+          xlab("Time relationship") +
+          theme(axis.text.x = element_text(hjust = 0.7, vjust = 0.8, size=8, angle = 35),
+                axis.text.y = element_text(size=6),
+                panel.background = element_blank(),
+                panel.grid.major = element_line(color = "grey"),
+                panel.border = element_rect(colour = "black", fill=NA, size=1),
+                #legend.position = "none",
+                axis.title.y = element_blank(),
+                axis.title=element_text(size=10,face="bold"),
+                          strip.background = element_blank(),
+                          strip.text.x = element_text(size = 12, margin = margin(3,3,3,3, "mm")))
+```
+
+![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-83-1.png)<!-- -->![](necrodegreadomics_prep_figures_for_manuscript_files/figure-gfm/unnamed-chunk-83-2.png)<!-- -->
