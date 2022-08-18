@@ -1,6 +1,10 @@
 ## Fitting time course linear models with limma and splines 
 
-fit_limma_poly <- function(type, .x = 2, wide_imp = wide_imp, wide_dat = wide_dat, top_prots = 18, pval_cutoff = 0.01){
+fit_limma_poly <- function(type, .x = 2, 
+                           wide_imp = wide_imp, 
+                           wide_dat = wide_dat, 
+                           top_prots = 18, 
+                           pval_cutoff = 0.01){
           
           # load required packages
           
@@ -103,12 +107,12 @@ histogram_toptable <- function(toptable, type, .x){
           
           
           np005 <- toptable %>% 
-                    filter(adj.P.Val <= 0.05) %>% 
+                    dplyr::filter(adj.P.Val <= 0.05) %>% 
                     pull(ID) %>% 
                     length()
           
           np001 <- toptable %>% 
-                    filter(adj.P.Val <= 0.01) %>% 
+                    dplyr::filter(adj.P.Val <= 0.01) %>% 
                     pull(ID) %>% 
                     length()
           
@@ -118,13 +122,13 @@ histogram_toptable <- function(toptable, type, .x){
                                    fill = "#2AB7CA", 
                                    color = "#e9ecef", 
                                    alpha=0.9) +
-                    geom_histogram(data = toptable %>% filter(adj.P.Val <= 0.05),
+                    geom_histogram(data = toptable %>% dplyr::filter(adj.P.Val <= 0.05),
                                    aes(x = adj.P.Val),
                                    binwidth = 0.005,
                                    fill = "#FE8585", 
                                    color = "#e9ecef", 
                                    alpha=0.9) +
-                    geom_histogram(data = toptable %>% filter(adj.P.Val <= 0.01),
+                    geom_histogram(data = toptable %>% dplyr::filter(adj.P.Val <= 0.01),
                                    aes(x = adj.P.Val),
                                    binwidth = 0.005,
                                    fill = "#FE4A49", 
@@ -174,7 +178,7 @@ vis_profs <- function(data,
           
           filt_top <- toptable %>% 
                     dplyr::filter(ID %in% interesting) %>%
-                    filter(adj.P.Val <= pval_cutoff) %>%
+                    dplyr::filter(adj.P.Val <= pval_cutoff) %>%
                     slice_min(order_by = adj.P.Val,
                               n = top_nr)
           
@@ -248,7 +252,7 @@ vis_profs_2 <- function(data,
           filt_top <- toptable %>% 
                     dplyr::filter(ID %in% interesting) %>%
                     dplyr::filter(!ID %in% exclude) %>%
-                    filter(adj.P.Val <= pval_cutoff) %>%
+                    dplyr::filter(adj.P.Val <= pval_cutoff) %>%
                     slice_min(order_by = P.Value,
                               n = top_nr)
           
@@ -381,7 +385,7 @@ fit_limma_tocomp <- function(.x, type, wide_imp = wide_imp, wide_dat = wide_dat,
           ## proteins per condition ----
           
           significan_proteins <- toptable %>% 
-                    filter(adj.P.Val <= pval_cutoff) %>% 
+                    dplyr::filter(adj.P.Val <= pval_cutoff) %>% 
                     pull(ID) 
           
           return(significan_proteins)
