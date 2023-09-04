@@ -1,4 +1,4 @@
-# Data analysis and reproducible report for: Retrospective Timing of Tissue Storage by Kinetics of Proteome Alterations – The „Proteomic Clock” Concept
+# Data analysis and reproducible report for:  Proteome alterations in human autopsy tissues in relation to time after death
 
 This repository contains the code and reproducible report for the analysis of protein abundance in autopisied tissue and its association with time of degradation.
 
